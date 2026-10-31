@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#05070f" />
+  <meta name="description" content="成长轨迹贪吃蛇 —— 吃掉每一个豆子，解锁赵佳杰的项目、实习与教育经历" />
+  <title>成长轨迹 · 贪吃蛇 | 赵佳杰</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2300e5ff'/%3E%3Cstop offset='1' stop-color='%237c4dff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='7' fill='%2305070f'/%3E%3Cpath d='M9 22c0-6 5-4 5-9s7-5 7 1' fill='none' stroke='url(%23g)' stroke-width='3.4' stroke-linecap='round'/%3E%3Ccircle cx='22' cy='9' r='2.2' fill='%2369f0ae'/%3E%3C/svg%3E" />
+
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/snake.css" />
+</head>
+<body class="snake-body">
+  <div class="bg-vignette" aria-hidden="true"></div>
+
+  <!-- 顶部：返回 / 标题 / 音效开关 -->
+  <header class="g-head">
+    <a class="g-back" href="./index.html" aria-label="返回个人空间">
+      <span aria-hidden="true">←</span> 个人空间
+    </a>
+    <div class="g-title">
+      <h1>成长轨迹<span class="grad-text"> · 贪吃蛇</span></h1>
+      <p>吃到的每一个豆子，都是一段走过的路</p>
+    </div>
+    <button id="sound-toggle" class="g-sound" type="button" aria-label="音效开关" title="音效开关">
+      <span id="sound-icon">🔇</span>
+    </button>
+  </header>
+
+  <main class="g-wrap">
+    <!-- ---------------- 游戏区 ---------------- -->
+    <section class="g-stage" aria-label="游戏区">
+      <div class="score-row">
+        <div class="score-tile is-main">
+          <span class="tile-label">当前分数</span>
+          <span class="tile-value"><b id="score-cur">0</b><em>/ <span id="score-target">12</span></em></span>
+        </div>
+        <div class="score-tile">
+          <span class="tile-label">历史最高</span>
+          <span class="tile-value"><b id="score-best">0</b><em>分</em></span>
+        </div>
+        <div class="score-tile">
+          <span class="tile-label">本局用时</span>
+          <span class="tile-value"><b id="score-time">0:00</b></span>
+        </div>
+        <div class="score-tile tile-actions">
+          <button id="btn-pause" class="mini-btn" type="button" title="暂停 / 继续（空格）">暂停</button>
+          <button id="btn-restart" class="mini-btn ghost" type="button" title="重新开始（R）">重开</button>
+        </div>
+      </div>
+
+      <div class="board-wrap">
+        <canvas id="board" role="img" aria-label="贪吃蛇游戏画面"></canvas>
+
+        <!-- 开始 / 暂停 / 失败 遮罩 -->
+        <div id="overlay" class="board-overlay" hidden>
+          <div class="ov-icon" id="ov-icon">▶</div>
+          <h2 id="ov-title">准备出发</h2>
+          <p id="ov-desc">吃掉 12 个成长豆，解锁全部经历</p>
+          <button id="ov-btn" class="btn-primary" type="button">开始游戏</button>
+          <p class="ov-tip" id="ov-tip">方向键 / WASD 控制方向</p>
+        </div>
+      </div>
+
+      <!-- 移动端方向键 -->
+      <div class="dpad" id="dpad" aria-label="方向控制">
+        <button data-dir="up" type="button" aria-label="上">▲</button>
+        <button data-dir="left" type="button" aria-label="左">◀</button>
+        <button data-dir="down" type="button" aria-label="下">▼</button>
+        <button data-dir="right" type="button" aria-label="右">▶</button>
+      </div>
+      <p class="g-hint">方向键 / WASD 转向 · 空格暂停 · R 重开 · 手机可直接滑动屏幕</p>
+    </section>
+
+    <!-- ---------------- 经历解锁侧栏 ---------------- -->
+    <aside class="g-side" aria-label="已解锁经历">
+      <div class="side-head">
+        <h2>成长节点</h2>
+        <span class="side-count"><b id="unlock-count">0</b> / <span id="unlock-total">12</span></span>
+      </div>
+      <div class="side-progress"><i id="progress-bar"></i></div>
+      <p class="side-sub" id="side-sub">还没有解锁任何经历，先吃一颗豆子吧</p>
+
+      <ol class="milestones" id="milestones"></ol>
+    </aside>
+  </main>
+
+  <!-- ---------------- 通关：完整成长轨迹回顾 ---------------- -->
+  <div id="win-modal" class="modal" hidden>
+    <div class="modal-mask" data-close></div>
+    <div class="modal-panel win-panel" role="dialog" aria-modal="true" aria-labelledby="win-title">
+      <button class="modal-close" type="button" data-close aria-label="关闭">✕</button>
+      <div class="win-head">
+        <div class="win-badge">🏆</div>
+        <div>
+          <h2 id="win-title">轨迹已完整</h2>
+          <p id="win-desc">你走完了目前为止的全部成长节点</p>
+        </div>
+      </div>
+      <div class="win-stats">
+        <div><b id="win-score">0</b><span>解锁经历</span></div>
+        <div><b id="win-time">0:00</b><span>用时</span></div>
+        <div><b id="win-best">0</b><span>历史最高</span></div>
+      </div>
+
+      <h3 class="win-sub">完整成长轨迹</h3>
+      <ol class="win-timeline" id="win-timeline"></ol>
+
+      <div class="win-actions">
+        <button id="win-again" class="btn-primary" type="button">再玩一次</button>
+        <a class="btn-ghost" href="./index.html">回到个人空间</a>
+      </div>
+      <p class="win-foot">向下扎根千行码，向上生长万里程。</p>
+    </div>
+  </div>
+
+  <script type="module" src="js/snake/main.js"></script>
+</body>
+</html>
