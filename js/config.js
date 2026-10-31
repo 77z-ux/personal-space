@@ -18,7 +18,7 @@ export const SITE = {
    *  部署到 GitHub Pages 后改成形如：
    *    https://<你的用户名>.github.io/<仓库名>/
    *  未部署前留空字符串 ''，页面会回退使用「当前访问地址」生成二维码。 */
-  url: '',
+  url: 'https://77z-ux.github.io/personal-space/',
   title: '赵佳杰 · 机器人系统开发',
   description: '机器人系统开发（嵌入式开发）｜ROS2 / STM32 / 运动控制 / 自主导航',
 };
