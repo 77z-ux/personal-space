@@ -1,0 +1,409 @@
+/**
+ * ============================================================
+ * adv/main.js —— 冒险游戏装配层
+ * ------------------------------------------------------------
+ * 把「地图生成 + 引擎 + 音效」接到 DOM：HUD、生涯节点侧栏、怪物图鉴、
+ * 浮动提示、升级三选一、结算界面、键鼠与触屏输入、进度存档。
+ * 生涯节点的外观/解锁顺序/存档口径与贪吃蛇完全一致。
+ * ============================================================
+ */
+
+import { NODES, NODE_COUNT, MONSTERS, PERKS } from './data.js';
+import { AdventureGame } from './game.js';
+import { sfx } from './sfx.js';
+
+const BEST_KEY = 'zjj_adv_best';
+const SEEN_KEY = 'zjj_adv_seen'; // 累计发现的怪物种类
+const NODE_KEY = 'zjj_adv_nodes'; // 累计解锁过的节点（跨局保留）
+
+const $ = (id) => document.getElementById(id);
+const el = {
+  canvas: $('adv-canvas'),
+  stage: $('stage-wrap'),
+  overlay: $('overlay'),
+  ovIcon: $('ov-icon'), ovTitle: $('ov-title'), ovDesc: $('ov-desc'), ovBtn: $('ov-btn'), ovTip: $('ov-tip'),
+  hpFill: $('hp-fill'), hpText: $('hp-text'), xpFill: $('xp-fill'), lvText: $('lv-text'),
+  score: $('score'), kills: $('kills'), timer: $('timer'),
+  btnPause: $('btn-pause'),
+  nodeCount: $('unlock-count'), nodeTotal: $('unlock-total'), progress: $('progress-bar'),
+  sideSub: $('side-sub'), nodeList: $('node-list'),
+  bestiaryList: $('bestiary-list'), bestiaryCount: $('bestiary-count'), bestScore: $('best-score'),
+  lvlModal: $('lvl-modal'), lvlCards: $('lvl-cards'), lvlSub: $('lvl-sub'),
+  resModal: $('res-modal'), resBadge: $('res-badge'), resTitle: $('res-title'), resDesc: $('res-desc'),
+  resScore: $('res-score'), resNodes: $('res-nodes'), resKills: $('res-kills'), resTime: $('res-time'),
+  resBestiary: $('res-bestiary'), resTimeline: $('res-timeline'), resTimelineTitle: $('res-timeline-title'),
+  resAgain: $('res-again'),
+  joystick: $('joystick'), knob: $('joystick-knob'),
+  btnAttack: $('btn-attack'), btnDash: $('btn-dash'),
+  soundBtn: $('sound-toggle'), soundIcon: $('sound-icon'),
+};
+
+/* ---------------- 存档 ---------------- */
+const readJSON = (k, def) => { try { return JSON.parse(localStorage.getItem(k) || '') ?? def; } catch { return def; } };
+let bestScore = Number(localStorage.getItem(BEST_KEY) || 0);
+let seenMonsters = new Set(readJSON(SEEN_KEY, []));
+let everNodes = new Set(readJSON(NODE_KEY, []));
+
+/* ---------------- 侧栏：生涯节点 ---------------- */
+el.nodeTotal.textContent = String(NODE_COUNT);
+el.bestScore.textContent = String(bestScore);
+
+function renderLockedNodes() {
+  el.nodeList.innerHTML = NODES.map(
+    (_, i) => `<li class="ms-locked" data-lock="${i}"><span class="lock-dot"></span>节点 ${String(i + 1).padStart(2, '0')} · 待解锁</li>`
+  ).join('');
+}
+
+function unlockCard(index) {
+  const m = NODES[index];
+  if (!m) return;
+  const li = document.createElement('li');
+  li.className = 'ms-item';
+  li.innerHTML = `<div class="ms-top">
+      <span class="ms-year">${m.year}</span>
+      <span class="ms-tag">${m.tag}</span>
+      <span class="ms-idx">#${String(index + 1).padStart(2, '0')}</span>
+    </div>
+    <div class="ms-title"><span>${m.icon}</span><span>${m.title}</span></div>
+    <p class="ms-text">${m.text}</p>`;
+  const placeholder = el.nodeList.querySelector(`[data-lock="${index}"]`);
+  if (placeholder) placeholder.replaceWith(li);
+  else el.nodeList.appendChild(li);
+  el.nodeList.scrollTo({ top: el.nodeList.scrollHeight, behavior: 'smooth' });
+  el.sideSub.textContent = `最新解锁 · ${m.title}`;
+}
+
+/* ---------------- 侧栏：怪物图鉴 ---------------- */
+function renderBestiary() {
+  el.bestiaryList.innerHTML = MONSTERS.map((m) => {
+    const known = seenMonsters.has(m.id);
+    return `<li class="${known ? 'known' : 'unknown'}">
+      <span class="b-icon">${known ? m.icon : '❔'}</span>
+      <span class="b-main">
+        <b>${known ? m.name : '未知生物'}</b>
+        <em>${known ? m.note : '尚未遭遇'}</em>
+      </span>
+      <span class="b-stats">${known ? `HP ${m.hp} · DMG ${m.dmg}` : '—'}</span>
+    </li>`;
+  }).join('');
+  el.bestiaryCount.textContent = `${seenMonsters.size} / ${MONSTERS.length}`;
+}
+
+function meetMonster(type) {
+  if (seenMonsters.has(type.id)) return;
+  seenMonsters.add(type.id);
+  localStorage.setItem(SEEN_KEY, JSON.stringify([...seenMonsters]));
+  renderBestiary();
+}
+
+/* ---------------- 吃豆...这里是开箱浮动提示 ---------------- */
+/** 把世界坐标换算成画布百分比，在宝藏原位置弹节点提示 */
+function showNodeToast(index, wx, wy) {
+  const m = NODES[index];
+  if (!m) return;
+  const sx = (wx - game.camera.x) * game.zoom + game.view.w / 2;
+  const sy = (wy - game.camera.y) * game.zoom + game.view.h / 2;
+  const left = Math.min(84, Math.max(16, (sx / game.view.w) * 100));
+  const topPct = (sy / game.view.h) * 100;
+  const below = topPct < 28;
+
+  const node = document.createElement('div');
+  node.className = `node-toast${below ? ' below' : ''}`;
+  node.style.left = `${left}%`;
+  node.style.top = `${topPct}%`;
+  node.innerHTML = `<div class="nt-card">
+      <div class="nt-head">
+        <span class="nt-emoji">${m.icon}</span>
+        <span class="nt-no">节点 ${String(index + 1).padStart(2, '0')}</span>
+        <span class="nt-plus">+1</span>
+      </div>
+      <div class="nt-title">${m.title}</div>
+      <p class="nt-text">${m.text}</p>
+    </div>`;
+  const olds = el.stage.querySelectorAll('.node-toast');
+  if (olds.length >= 3) olds[0].remove();
+  el.stage.appendChild(node);
+  setTimeout(() => node.remove(), 2350);
+}
+
+/* ---------------- HUD ---------------- */
+function fmtTime(ms) {
+  const s = Math.round(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function updateHUD() {
+  const p = game.player;
+  const hpPct = Math.max(0, (p.hp / p.stats.maxHp) * 100);
+  el.hpFill.style.width = `${hpPct}%`;
+  el.hpFill.classList.toggle('low', hpPct < 30);
+  el.hpText.textContent = `${Math.ceil(p.hp)}/${Math.round(p.stats.maxHp)}`;
+  el.xpFill.style.width = `${Math.min(100, (p.xp / p.xpNeed) * 100)}%`;
+  el.lvText.textContent = `Lv.${p.level}`;
+  el.score.textContent = String(game.score);
+  el.kills.textContent = String(game.kills);
+  el.timer.textContent = fmtTime(game.timeMs);
+  el.nodeCount.textContent = String(game.nodesFound);
+  el.progress.style.width = `${(game.nodesFound / NODE_COUNT) * 100}%`;
+}
+setInterval(() => { if (game) updateHUD(); }, 120);
+
+/* ---------------- 遮罩 ---------------- */
+function showOverlay({ icon, title, desc, btn, tip }) {
+  el.ovIcon.textContent = icon;
+  el.ovTitle.textContent = title;
+  el.ovDesc.textContent = desc;
+  el.ovBtn.textContent = btn;
+  el.ovTip.textContent = tip;
+  el.overlay.hidden = false;
+}
+const hideOverlay = () => { el.overlay.hidden = true; };
+
+/* ---------------- 引擎 ---------------- */
+const game = new AdventureGame(el.canvas, {
+  onNode(index, x, y) {
+    unlockCard(index);
+    everNodes.add(index);
+    localStorage.setItem(NODE_KEY, JSON.stringify([...everNodes]));
+    showNodeToast(index, x, y);
+    sfx.pickupNode();
+  },
+  onKill(type) {
+    meetMonster(type);
+    sfx.kill();
+  },
+  onHit({ crit }) {
+    if (crit) sfx.crit(); else sfx.hit();
+  },
+  onHurt() {
+    sfx.hurt();
+  },
+  onLevelUp(picks) {
+    renderPerks(picks);
+    sfx.levelUp();
+  },
+  onEnd(res) {
+    setTimeout(() => showResult(res), 420);
+  },
+  onStateChange(s) {
+    el.btnPause.textContent = s === 'running' ? '暂停' : s === 'paused' ? '继续' : '暂停';
+    if (s === 'running') hideOverlay();
+    if (s === 'paused') {
+      showOverlay({ icon: '⏸', title: '已暂停', desc: '喘口气，地牢不会消失', btn: '继续冒险', tip: 'P 或 Esc 继续' });
+    }
+  },
+});
+
+/* ---------------- 升级三选一 ---------------- */
+function renderPerks(picks) {
+  el.lvlSub.textContent = `等级 ${game.player.level} · 击杀怪物可获得经验`;
+  el.lvlCards.innerHTML = picks
+    .map(
+      (p) => `<button class="perk-card" type="button" data-perk="${p.id}">
+        <span class="perk-icon">${p.icon}</span>
+        <span class="perk-name">${p.name}</span>
+        <span class="perk-desc">${p.desc}</span>
+      </button>`
+    )
+    .join('');
+  el.lvlModal.hidden = false;
+}
+
+el.lvlCards.addEventListener('click', (e) => {
+  const card = e.target.closest('[data-perk]');
+  if (!card) return;
+  sfx.blip({ freq: 880, dur: 0.1 });
+  game.choosePerk(card.dataset.perk);
+  el.lvlModal.hidden = true;
+});
+
+/* ---------------- 结算 ---------------- */
+function showResult(res) {
+  const win = res.reason === 'win';
+  const score = Math.max(res.score, 0);
+  if (score > bestScore) {
+    bestScore = score;
+    localStorage.setItem(BEST_KEY, String(bestScore));
+  }
+  el.bestScore.textContent = String(bestScore);
+
+  el.resBadge.textContent = win ? '🏆' : '💀';
+  el.resTitle.textContent = win ? '通关：轨迹已完整' : '阵亡：轨迹中断';
+  el.resDesc.textContent = win
+    ? `你走完了目前为止的全部 ${NODE_COUNT} 个成长节点`
+    : `倒在地牢里，已解锁 ${res.nodes} / ${NODE_COUNT} 段经历`;
+  el.resScore.textContent = String(score);
+  el.resNodes.textContent = String(res.nodes);
+  el.resKills.textContent = String(res.kills);
+  el.resTime.textContent = fmtTime(res.timeMs);
+
+  el.resBestiary.innerHTML = res.bestiary.length
+    ? res.bestiary.map((id) => {
+      const m = MONSTERS.find((x) => x.id === id);
+      return `<span class="chip">${m.icon} ${m.name}</span>`;
+    }).join('')
+    : '<span class="chip dim">本局未遭遇怪物</span>';
+
+  // 通关才展示完整成长轨迹（与贪吃蛇一致），阵亡时隐藏该区块
+  el.resTimelineTitle.hidden = !win;
+  el.resTimeline.hidden = !win;
+  if (win) {
+    el.resTimeline.innerHTML = NODES.map(
+      (m, i) => `<li style="animation-delay:${i * 0.055}s">
+        <span class="wt-year">${m.year}</span>
+        <span class="wt-title">${m.icon} ${m.title}</span>
+        <span class="wt-text">${m.text}</span>
+      </li>`
+    ).join('');
+  }
+
+  el.resModal.hidden = false;
+  document.body.style.overflow = 'hidden';
+  if (win) sfx.win(); else sfx.over();
+}
+
+function closeResult() {
+  el.resModal.hidden = true;
+  document.body.style.overflow = '';
+}
+el.resModal.addEventListener('click', (e) => { if (e.target.closest('[data-close]')) closeResult(); });
+
+/** 开新的一局 */
+function startNewRun() {
+  closeResult();
+  el.lvlModal.hidden = true;
+  el.stage.querySelectorAll('.node-toast').forEach((n) => n.remove());
+  renderLockedNodes();
+  el.nodeCount.textContent = '0';
+  el.progress.style.width = '0%';
+  el.sideSub.textContent = '还没有解锁任何经历，先去开一个宝箱吧';
+  game.start();
+  updateHUD();
+}
+
+el.resAgain.addEventListener('click', startNewRun);
+el.ovBtn.addEventListener('click', () => {
+  if (game.state === 'paused') game.resume();
+  else if (game.state === 'over' || game.state === 'won') startNewRun();
+  else startNewRun();
+});
+el.btnPause.addEventListener('click', () => {
+  if (game.state === 'idle') game.start();
+  else game.togglePause();
+});
+
+/* ---------------- 键盘输入 ---------------- */
+const KEY_DIR = {
+  ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+  w: 'up', s: 'down', a: 'left', d: 'right',
+};
+const keys = new Set();
+
+function syncInput() {
+  let mx = 0, my = 0;
+  if (keys.has('up')) my -= 1;
+  if (keys.has('down')) my += 1;
+  if (keys.has('left')) mx -= 1;
+  if (keys.has('right')) mx += 1;
+  game.input.mx = mx;
+  game.input.my = my;
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.target.matches('input, textarea')) return;
+  const dir = KEY_DIR[e.key] || KEY_DIR[e.key.toLowerCase?.()];
+  if (dir) {
+    e.preventDefault();
+    keys.add(dir);
+    syncInput();
+    if (game.state === 'idle') game.start();
+    return;
+  }
+  if (e.key === ' ' || e.key.toLowerCase() === 'j') {
+    e.preventDefault();
+    sfx.swing();
+    game.tryAttack();
+    return;
+  }
+  if (e.key === 'Shift') { e.preventDefault(); sfx.dash(); game.tryDash(); return; }
+  if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
+    if (!el.resModal.hidden) closeResult();
+    else game.togglePause();
+  }
+  if (e.key === 'r' || e.key === 'R') startNewRun();
+});
+
+window.addEventListener('keyup', (e) => {
+  const dir = KEY_DIR[e.key] || KEY_DIR[e.key.toLowerCase?.()];
+  if (dir) { keys.delete(dir); syncInput(); }
+});
+window.addEventListener('blur', () => { keys.clear(); syncInput(); if (game.state === 'running') game.pause(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && game.state === 'running') game.pause(); });
+
+/* ---------------- 触屏：虚拟摇杆 ---------------- */
+let joyId = null;
+const JOY_R = 46;
+el.joystick.addEventListener('pointerdown', (e) => {
+  joyId = e.pointerId;
+  el.joystick.setPointerCapture(e.pointerId);
+  moveJoystick(e);
+  if (game.state === 'idle') game.start();
+});
+el.joystick.addEventListener('pointermove', (e) => { if (e.pointerId === joyId) moveJoystick(e); });
+['pointerup', 'pointercancel'].forEach((evt) => el.joystick.addEventListener(evt, () => {
+  joyId = null;
+  el.knob.style.transform = 'translate(0px, 0px)';
+  game.input.mx = 0; game.input.my = 0;
+}));
+
+function moveJoystick(e) {
+  const r = el.joystick.getBoundingClientRect();
+  const cx = r.left + r.width / 2;
+  const cy = r.top + r.height / 2;
+  let dx = e.clientX - cx;
+  let dy = e.clientY - cy;
+  const d = Math.hypot(dx, dy);
+  if (d > JOY_R) { dx = (dx / d) * JOY_R; dy = (dy / d) * JOY_R; }
+  el.knob.style.transform = `translate(${dx}px, ${dy}px)`;
+  game.input.mx = dx / JOY_R;
+  game.input.my = dy / JOY_R;
+}
+
+// 按住持续攻击
+let attackTimer = 0;
+const startAttackHold = () => {
+  sfx.swing();
+  game.tryAttack();
+  clearInterval(attackTimer);
+  attackTimer = setInterval(() => { sfx.swing(); game.tryAttack(); }, 220);
+};
+const stopAttackHold = () => clearInterval(attackTimer);
+el.btnAttack.addEventListener('pointerdown', (e) => { e.preventDefault(); startAttackHold(); });
+['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => el.btnAttack.addEventListener(ev, stopAttackHold));
+el.btnDash.addEventListener('pointerdown', (e) => { e.preventDefault(); sfx.dash(); game.tryDash(); });
+el.stage.addEventListener('touchmove', (e) => { if (e.target.closest('.joystick, .tbtn')) return; e.preventDefault(); }, { passive: false });
+
+/* ---------------- 音效开关 ---------------- */
+function syncSoundIcon() {
+  el.soundIcon.textContent = sfx.enabled ? '🔊' : '🔇';
+  el.soundBtn.title = sfx.enabled ? '音效已开启（点击静音）' : '音效已静音（点击开启）';
+}
+el.soundBtn.addEventListener('click', () => { sfx.toggle(); syncSoundIcon(); });
+document.addEventListener('adv:sound', syncSoundIcon);
+
+/* ---------------- 首屏 ---------------- */
+renderLockedNodes();
+renderBestiary();
+updateHUD();
+showOverlay({
+  icon: '⚔️',
+  title: '生涯地牢',
+  desc: `随机生成的地牢里藏着 ${NODE_COUNT} 个宝藏，集齐即可解锁完整成长轨迹`,
+  btn: '开始冒险',
+  tip: 'WASD / 方向键移动 · J 或空格攻击 · Shift 冲刺',
+});
+syncSoundIcon();
+
+// 调试钩子（控制台可查看状态，不影响玩法）
+window.__adv = game;
+window.__advRestart = startNewRun;

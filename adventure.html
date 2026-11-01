@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#05070f" />
+  <meta name="description" content="生涯地牢 · 冒险小游戏 —— 探索随机地牢、击杀怪物、拾取宝藏解锁赵佳杰的成长节点" />
+  <title>生涯地牢 · 冒险 | 赵佳杰</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2305070f'/%3E%3Cpath d='M16 4l9 5v12l-9 5-9-5V9z' fill='none' stroke='%2300e5ff' stroke-width='2'/%3E%3Cpath d='M13 22l2-9 5 3-2 6z' fill='%23ffd166'/%3E%3Ccircle cx='12' cy='13' r='1.8' fill='%2369f0ae'/%3E%3C/svg%3E" />
+
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/adventure.css" />
+</head>
+<body class="adv-body">
+  <div class="bg-vignette" aria-hidden="true"></div>
+
+  <header class="g-head">
+    <a class="g-back" href="./index.html" aria-label="返回个人空间"><span aria-hidden="true">←</span> 个人空间</a>
+    <div class="g-title">
+      <h1>生涯地牢<span class="grad-text"> · 冒险</span></h1>
+      <p>每打开一个宝藏，解锁一段真实走过的路</p>
+    </div>
+    <button id="sound-toggle" class="g-sound" type="button" aria-label="音效开关" title="音效开关">
+      <span id="sound-icon">🔇</span>
+    </button>
+  </header>
+
+  <main class="g-wrap">
+    <!-- ---------------- 游戏区 ---------------- -->
+    <section class="g-stage" aria-label="游戏区">
+      <div class="hud">
+        <div class="hud-left">
+          <div class="bar-row">
+            <span class="bar-label">HP</span>
+            <div class="bar hp"><i id="hp-fill"></i></div>
+            <span class="bar-num" id="hp-text">100/100</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">EXP</span>
+            <div class="bar xp"><i id="xp-fill"></i></div>
+            <span class="bar-num" id="lv-text">Lv.1</span>
+          </div>
+        </div>
+        <div class="hud-right">
+          <div class="hud-stat"><b id="score">0</b><span>分数</span></div>
+          <div class="hud-stat"><b id="kills">0</b><span>击杀</span></div>
+          <div class="hud-stat"><b id="timer">0:00</b><span>用时</span></div>
+          <button id="btn-pause" class="mini-btn" type="button">暂停</button>
+        </div>
+      </div>
+
+      <div class="stage-wrap" id="stage-wrap">
+        <canvas id="adv-canvas" role="img" aria-label="地牢冒险画面"></canvas>
+
+        <div id="overlay" class="board-overlay" hidden>
+          <div class="ov-icon" id="ov-icon">⚔️</div>
+          <h2 id="ov-title">生涯地牢</h2>
+          <p id="ov-desc">探索随机生成的地牢，集齐 12 个宝藏解锁全部成长节点</p>
+          <button id="ov-btn" class="btn-primary" type="button">开始冒险</button>
+          <p class="ov-tip" id="ov-tip">WASD / 方向键移动 · J 或空格攻击 · Shift 冲刺</p>
+        </div>
+      </div>
+
+      <!-- 移动端操作：虚拟摇杆 + 攻击/冲刺 -->
+      <div class="touch-controls" id="touch-controls">
+        <div class="joystick" id="joystick"><span class="joystick-knob" id="joystick-knob"></span></div>
+        <div class="touch-btns">
+          <button id="btn-attack" class="tbtn attack" type="button">攻击</button>
+          <button id="btn-dash" class="tbtn dash" type="button">冲刺</button>
+        </div>
+      </div>
+      <p class="g-hint">右上角小地图：白点=你，金色=宝藏，其他亮点=怪物</p>
+    </section>
+
+    <!-- ---------------- 侧栏：生涯节点 + 图鉴 ---------------- -->
+    <aside class="g-side" aria-label="生涯节点与图鉴">
+      <div class="side-head">
+        <h2>成长节点</h2>
+        <span class="side-count"><b id="unlock-count">0</b> / <span id="unlock-total">12</span></span>
+      </div>
+      <div class="side-progress"><i id="progress-bar"></i></div>
+      <p class="side-sub" id="side-sub">还没有解锁任何经历，先去开一个宝箱吧</p>
+      <ol class="milestones" id="node-list"></ol>
+
+      <div class="side-head mt">
+        <h2>怪物图鉴</h2>
+        <span class="side-count" id="bestiary-count">0 / 3</span>
+      </div>
+      <ul class="bestiary" id="bestiary-list"></ul>
+      <p class="side-foot">历史最高分：<b id="best-score">0</b></p>
+    </aside>
+  </main>
+
+  <!-- ---------------- 升级三选一 ---------------- -->
+  <div id="lvl-modal" class="modal" hidden>
+    <div class="modal-mask"></div>
+    <div class="modal-panel lvl-panel" role="dialog" aria-modal="true" aria-labelledby="lvl-title">
+      <h2 id="lvl-title" class="lvl-title">升级！选择一项成长</h2>
+      <p class="lvl-sub" id="lvl-sub">等级 2 · 击杀怪物获得经验</p>
+      <div class="perk-cards" id="lvl-cards"></div>
+    </div>
+  </div>
+
+  <!-- ---------------- 结算 ---------------- -->
+  <div id="res-modal" class="modal" hidden>
+    <div class="modal-mask" data-close></div>
+    <div class="modal-panel res-panel" role="dialog" aria-modal="true" aria-labelledby="res-title">
+      <button class="modal-close" type="button" data-close aria-label="关闭">✕</button>
+      <div class="win-head">
+        <div class="win-badge" id="res-badge">🏆</div>
+        <div>
+          <h2 id="res-title">通关</h2>
+          <p id="res-desc">你集齐了全部成长节点</p>
+        </div>
+      </div>
+      <div class="win-stats">
+        <div><b id="res-score">0</b><span>分数</span></div>
+        <div><b id="res-nodes">0</b><span>解锁节点</span></div>
+        <div><b id="res-kills">0</b><span>击杀</span></div>
+        <div><b id="res-time">0:00</b><span>用时</span></div>
+      </div>
+      <div class="res-bestiary">
+        <span class="res-label">本局图鉴</span>
+        <div id="res-bestiary" class="res-chips"></div>
+      </div>
+      <h3 class="win-sub" id="res-timeline-title">完整成长轨迹</h3>
+      <ol class="win-timeline" id="res-timeline"></ol>
+      <div class="win-actions">
+        <button id="res-again" class="btn-primary" type="button">再来一局</button>
+        <a class="btn-ghost" href="./index.html">回到个人空间</a>
+      </div>
+      <p class="win-foot">向下扎根千行码，向上生长万里程。</p>
+    </div>
+  </div>
+
+  <script type="module" src="js/adv/main.js"></script>
+</body>
+</html>
