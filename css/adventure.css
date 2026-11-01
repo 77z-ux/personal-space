@@ -111,10 +111,10 @@ body.adv-body::before {
 }
 .mini-btn:hover { background: rgba(0, 229, 255, .2); }
 
-/* ---------------- 画布 ---------------- */
+/* 画布：比例与游戏虚拟分辨率 720×416 一致，letterbox 后不留黑边 */
 .stage-wrap {
   position: relative; width: 100%;
-  aspect-ratio: 16 / 10;
+  aspect-ratio: 45 / 26;
   max-height: 62vh;
   border-radius: 14px; overflow: hidden;
   border: 1px solid rgba(0, 229, 255, .16);
@@ -215,15 +215,22 @@ body.adv-body::before {
   box-shadow: 0 0 18px rgba(0, 229, 255, .5);
   transition: transform .06s linear; pointer-events: none;
 }
-.touch-btns { display: flex; gap: 10px; }
+.touch-btns { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; max-width: 62%; }
 .tbtn {
   width: 76px; height: 76px; border-radius: 50%;
   border: 1px solid rgba(0, 229, 255, .35);
   background: rgba(16, 24, 46, .85); color: var(--neon-cyan);
   font-size: 13px; font-weight: 700; touch-action: none;
   transition: transform .1s, box-shadow .1s;
+  -webkit-user-select: none; user-select: none;
 }
 .tbtn:active { transform: scale(.94); box-shadow: 0 0 22px rgba(0, 229, 255, .5); }
+.tbtn.jump {
+  width: 88px; height: 88px; font-size: 15px; color: #04202a;
+  border-color: rgba(255, 209, 102, .6);
+  background: linear-gradient(140deg, #ffe9a8, #ffd166);
+  box-shadow: 0 0 22px rgba(255, 209, 102, .45);
+}
 .tbtn.attack { background: linear-gradient(140deg, rgba(0, 229, 255, .22), rgba(124, 77, 255, .22)); }
 .tbtn.dash { border-color: rgba(105, 240, 174, .45); color: var(--neon-green); }
 
@@ -510,8 +517,10 @@ body.adv-body::before {
   .nt-emoji { font-size: 12.5px; }
   .nt-title { font-size: 11px; }
   .nt-text { font-size: 10px; }
-  .joystick { width: 100px; height: 100px; }
-  .tbtn { width: 66px; height: 66px; font-size: 12px; }
+  .joystick { width: 96px; height: 96px; }
+  .tbtn { width: 56px; height: 56px; font-size: 11.5px; }
+  .tbtn.jump { width: 70px; height: 70px; font-size: 13px; }
+  .touch-btns { gap: 8px; max-width: 64%; }
   .win-stats { grid-template-columns: repeat(2, 1fr); }
   .perk-cards { grid-template-columns: 1fr; }
   .reveal-panel { width: 100%; }

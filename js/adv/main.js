@@ -43,7 +43,7 @@ const el = {
   resBestiary: $('res-bestiary'), resTimeline: $('res-timeline'), resTimelineTitle: $('res-timeline-title'),
   resAgain: $('res-again'),
   joystick: $('joystick'), knob: $('joystick-knob'),
-  btnAttack: $('btn-attack'), btnDash: $('btn-dash'),
+  btnAttack: $('btn-attack'), btnDash: $('btn-dash'), btnJump: $('btn-jump'),
   soundBtn: $('sound-toggle'), soundIcon: $('sound-icon'),
 };
 
@@ -208,6 +208,10 @@ const game = new AdventureGame(el.canvas, {
     meetMonster(type);
     sfx.kill();
   },
+  onMeet(type) {
+    // 进入视野就记进图鉴（不必打死）
+    meetMonster(type);
+  },
   onHit({ crit }) {
     if (crit) sfx.crit(); else sfx.hit();
   },
@@ -215,8 +219,10 @@ const game = new AdventureGame(el.canvas, {
     sfx.hurt();
   },
   onPickup({ kind, healed }) {
-    if (kind === 'key') {
-      showHint('🔑', '获得钥匙', '终点宝箱已解锁，向右冲！', 'gold');
+    if (kind === 'coin') {
+      sfx.blip({ freq: 1180, dur: 0.06, vol: 0.14 });
+    } else if (kind === 'key') {
+      showHint('🔑', '获得钥匙', '钥匙到手！冲向关卡最右侧的宝箱', 'gold');
       sfx.blip({ freq: 990, dur: 0.12 });
       sfx.blip({ freq: 1320, t: 0.08, dur: 0.14 });
     } else if (kind === 'potion') {
@@ -239,7 +245,7 @@ const game = new AdventureGame(el.canvas, {
     el.btnPause.textContent = s === 'running' ? '暂停' : s === 'paused' ? '继续' : '暂停';
     if (s === 'running') hideOverlay();
     if (s === 'paused') {
-      showOverlay({ icon: '⏸', title: '已暂停', desc: '喘口气，地牢不会消失', btn: '继续冒险', tip: 'P 或 Esc 继续' });
+      showOverlay({ icon: '⏸', title: '已暂停', desc: '喘口气，关卡一直在这里等你', btn: '继续冒险', tip: 'P 或 Esc 继续 · R 重开一局' });
     }
   },
 });
@@ -345,26 +351,33 @@ el.btnPause.addEventListener('click', () => {
 
 /* ---------------- 键盘输入 ---------------- */
 const KEY_DIR = {
-  ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
-  w: 'up', s: 'down', a: 'left', d: 'right',
+  ArrowLeft: 'left', ArrowRight: 'right', a: 'left', d: 'right',
 };
+const KEY_JUMP = { ArrowUp: 1, w: 1, W: 1, k: 1, ' ': 1 };
 const keys = new Set();
 
 function syncInput() {
-  let mx = 0, my = 0;
-  if (keys.has('up')) my -= 1;
-  if (keys.has('down')) my += 1;
+  let mx = 0;
   if (keys.has('left')) mx -= 1;
   if (keys.has('right')) mx += 1;
   game.input.mx = mx;
-  game.input.my = my;
 }
 
 window.addEventListener('keydown', (e) => {
   // 宝藏展示中：任意键继续（消耗掉这次按键，不做其它动作）
   if (tryContinue()) { e.preventDefault(); return; }
   if (e.target.matches('input, textarea')) return;
-  const dir = KEY_DIR[e.key] || KEY_DIR[e.key.toLowerCase?.()];
+  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+
+  if (KEY_JUMP[e.key] || KEY_JUMP[e.key.toLowerCase?.()]) {
+    e.preventDefault();
+    if (!e.repeat) {
+      if (game.state === 'idle' || game.state === 'over') startNewRun();
+      game.pressJump();
+    }
+    return;
+  }
+  const dir = KEY_DIR[e.key] || KEY_DIR[key];
   if (dir) {
     e.preventDefault();
     keys.add(dir);
@@ -372,7 +385,7 @@ window.addEventListener('keydown', (e) => {
     if (game.state === 'idle') game.start();
     return;
   }
-  if (e.key === ' ' || e.key.toLowerCase() === 'j') {
+  if (key === 'j') {
     e.preventDefault();
     sfx.swing();
     game.tryAttack();
@@ -387,10 +400,12 @@ window.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('keyup', (e) => {
-  const dir = KEY_DIR[e.key] || KEY_DIR[e.key.toLowerCase?.()];
+  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (KEY_JUMP[e.key] || KEY_JUMP[e.key.toLowerCase?.()]) { game.releaseJump(); return; }
+  const dir = KEY_DIR[e.key] || KEY_DIR[key];
   if (dir) { keys.delete(dir); syncInput(); }
 });
-window.addEventListener('blur', () => { keys.clear(); syncInput(); if (game.state === 'running') game.pause(); });
+window.addEventListener('blur', () => { keys.clear(); syncInput(); game.releaseJump(); if (game.state === 'running') game.pause(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden && game.state === 'running') game.pause(); });
 
 /* ---------------- 触屏：虚拟摇杆 ---------------- */
@@ -406,9 +421,13 @@ el.joystick.addEventListener('pointermove', (e) => { if (e.pointerId === joyId) 
 ['pointerup', 'pointercancel'].forEach((evt) => el.joystick.addEventListener(evt, () => {
   joyId = null;
   el.knob.style.transform = 'translate(0px, 0px)';
-  game.input.mx = 0; game.input.my = 0;
+  game.input.mx = 0;
+  joyJumping = false;
+  game.releaseJump();
 }));
 
+// 摇杆向上推也能跳（手机上单手也能推进）：推过阈值触发一次，拉回才解除
+let joyJumping = false;
 function moveJoystick(e) {
   const r = el.joystick.getBoundingClientRect();
   const cx = r.left + r.width / 2;
@@ -419,7 +438,9 @@ function moveJoystick(e) {
   if (d > JOY_R) { dx = (dx / d) * JOY_R; dy = (dy / d) * JOY_R; }
   el.knob.style.transform = `translate(${dx}px, ${dy}px)`;
   game.input.mx = dx / JOY_R;
-  game.input.my = dy / JOY_R;
+  const up = dy / JOY_R < -0.5;
+  if (up && !joyJumping) { joyJumping = true; game.pressJump(); }
+  else if (!up && joyJumping) { joyJumping = false; game.releaseJump(); }
 }
 
 // 按住持续攻击
@@ -434,6 +455,13 @@ const stopAttackHold = () => clearInterval(attackTimer);
 el.btnAttack.addEventListener('pointerdown', (e) => { e.preventDefault(); startAttackHold(); });
 ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => el.btnAttack.addEventListener(ev, stopAttackHold));
 el.btnDash.addEventListener('pointerdown', (e) => { e.preventDefault(); sfx.dash(); game.tryDash(); });
+// 跳跃：按下即可，按住更高（可变跳跃高度），松开停止上升
+['pointerdown'].forEach((ev) => el.btnJump.addEventListener(ev, (e) => {
+  e.preventDefault();
+  if (game.state === 'idle' || game.state === 'over') startNewRun();
+  game.pressJump();
+}));
+['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => el.btnJump.addEventListener(ev, () => game.releaseJump()));
 
 // 宝藏展示中：点遮罩任意位置也能继续（手机友好）
 el.revealModal.addEventListener('pointerdown', (e) => { if (e.target.closest('.modal-mask')) tryContinue(); });
@@ -453,11 +481,11 @@ renderLockedNodes();
 renderBestiary();
 updateHUD();
 showOverlay({
-  icon: '⚔️',
-  title: '生涯地牢',
-  desc: `12 个关卡，每关藏着一段真实经历：清怪、找钥匙、打开终点宝箱`,
-  btn: '开始冒险',
-  tip: 'WASD / 方向键移动 · J 或空格攻击 · Shift 冲刺跨坑',
+  icon: '🕹️',
+  title: '生涯闯关',
+  desc: `12 关横版平台跳跃：踩/打怪物、爬上阶梯塔拿到钥匙，再到最右侧打开宝箱`,
+  btn: '开始闯关',
+  tip: '← → 移动 · 空格 / ↑ 跳跃（可二段跳）· 踩怪头顶或 J 键攻击 · Shift 冲刺',
 });
 syncSoundIcon();
 

@@ -1,860 +1,846 @@
 /**
  * ============================================================
- * adv/game.js —— 冒险游戏主引擎（Canvas 2D，零依赖）
+ * adv/game.js —— 横版卷轴平台跳跃引擎（Canvas 2D，零依赖）
  * ------------------------------------------------------------
- * 职责：关卡装载 / 输入解算 / 战斗判定 / 相机 / 粒子 / 小地图 / 结算。
- * 与 DOM 完全解耦：所有 UI 事件通过 opts 回调抛给 main.js。
- *
- * 【关卡制】共 12 关（= 生涯节点数），每关一条从左到右的路线：
- *   跑图清怪 → 捡到钥匙 → 打开终点宝箱 → 冻结并展示节点详情
- *   → 按任意键继续 → 进入下一关；第 12 关结束后进入通关结算。
- * 玩家的生命值 / 等级 / 经验 / 成长词条跨关保留。
- *
- * 状态机：
- *   idle(开始界面) → running → levelup(升级三选一)
- *                            → reveal(宝藏冻结展示节点) → running(下一关)
- *                            → paused
- *                            → won(第 12 关通关) / over(阵亡)
+ * · 固定步长逻辑（1/60s）+ 逐帧渲染：不同刷新率下手感一致
+ * · 卷轴相机：跟随角色横向滚动，纵向有限跟随并夹到世界边界
+ * · 关卡流程：跑图 → 拿钥匙 → 走到终点宝箱 → 冻结展示节点 → 下一关
+ * · 战斗：踩踏（马里奥式）/ 挥砍 / 冲刺三种输出，接触伤害 + 无敌帧
+ * · 渲染：虚拟分辨率 720×416 等比 letterbox 到画布，保证任何屏幕比例
+ *        都能看到同样大小的画面和完整的跳跃路径
  * ============================================================
  */
 
-import { CONFIG, NODES, NODE_COUNT, PERKS } from './data.js';
-import { generateLevel, makeRng, TILE, tileAt } from './level.js';
-import { circleHitsWall, markExplored } from './dungeon.js';
-import { Player, Enemy, Pickup } from './entities.js';
+import { CONFIG, NODES, VIEW, PERKS, LEVEL_THEMES } from './data.js';
+import { generateLevel, makeRng, TI, tileAt, isSolidAt } from './level.js';
+import { Player, Enemy, Pickup, rr } from './entities.js';
 
-const noop = () => {};
-const DEG = Math.PI / 180;
-export const LEVEL_COUNT = Math.min(NODE_COUNT, CONFIG.levelCount || NODE_COUNT);
+export const LEVEL_COUNT = Math.min(NODES.length, LEVEL_THEMES.length);
 
-/** 归一化到 (-PI, PI] 的角度差 */
-function angleDiff(a, b) {
-  let d = a - b;
-  while (d > Math.PI) d -= Math.PI * 2;
-  while (d < -Math.PI) d += Math.PI * 2;
-  return d;
-}
+const T = CONFIG.tile;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const rnd = (a, b) => a + Math.random() * (b - a);
+/** 稳定伪随机（用于星空等装饰，避免每帧闪烁） */
+const hash = (n) => {
+  const s = Math.sin(n * 127.1) * 43758.5453;
+  return s - Math.floor(s);
+};
 
 export class AdventureGame {
-  constructor(canvas, opts = {}) {
+  constructor(canvas, hooks = {}) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
-    this.opts = opts;
-    this.onNode = opts.onNode || noop;      // 打开宝藏：请 UI 冻结并展示节点
-    this.onKill = opts.onKill || noop;
-    this.onLevelUp = opts.onLevelUp || noop;
-    this.onEnd = opts.onEnd || noop;
-    this.onHit = opts.onHit || noop;        // 命中怪物
-    this.onHurt = opts.onHurt || noop;      // 玩家受伤
-    this.onStateChange = opts.onStateChange || noop;
-    this.onPickup = opts.onPickup || noop;  // 拾取钥匙 / 药水
-    this.onLevel = opts.onLevel || noop;    // 关卡装载完成（换配色/章节名）
+    this.hooks = hooks;
 
-    /** @type {'idle'|'running'|'paused'|'levelup'|'reveal'|'won'|'over'} */
-    this.state = 'idle';
-    this.input = { mx: 0, my: 0 };
+    this.state = 'idle'; // idle / running / paused / levelup / reveal / over
+    this.input = { mx: 0, jumpHeld: false };
+    this.cam = { x: 0, y: 0 };
     this.time = 0;
-    this.camera = { x: 0, y: 0 };
-    this.shake = 0;
-    this.particles = [];
-    this.floats = [];
-    this.pendingLevels = 0;
-
-    this._ro = new ResizeObserver(() => this.resize());
-    this._ro.observe(canvas.parentElement || canvas);
-
-    this.newRun();
-    this.resize();
-    this._loop = this._loop.bind(this);
-    this._raf = requestAnimationFrame(this._loop);
-  }
-
-  /* ------------------------------ 一局新游戏 ------------------------------ */
-  newRun() {
-    this.player = new Player(0, 0); // 具体坐标由 loadLevel 给出
-    this.kills = 0;
     this.timeMs = 0;
-    this.bestiary = new Set();
+    this.score = 0;
+    this.kills = 0;
     this.nodesFound = 0;
-    this.pendingLevels = 0;
-    this.loadLevel(0);
-    this._setState('idle');
-  }
-
-  /** 装载第 i 关（保留玩家血量/等级/成长） */
-  loadLevel(i) {
-    this.levelIndex = i;
-    const rng = makeRng(Date.now() + i * 7919);
-    this.rng = rng;
-    this.map = generateLevel(i, rng);
-
-    const s = this.map.spawn;
-    const p = this.player;
-    p.x = s.x; p.y = s.y;
-    p.vx = 0; p.vy = 0; p.kx = 0; p.ky = 0;
-    p.invuln = 1.0;
-    p.atkTimer = 0;
-    p.dashTimer = 0;
-    p.dashCd = 0;
-
+    this.levelIndex = 0;
     this.hasKey = false;
-    this.pickups = [];
-    this.enemies = [];
-    this._populate();
+    this.chestOpen = false;
+    this.perkPicks = null;
+    this.pendingLevels = 0;
+    this.revealAt = 0;
+    this.shake = 0;
+    this.lockedHintCd = 0;
 
-    this.camera.x = s.x;
-    this.camera.y = s.y;
+    this.enemies = [];
+    this.pickups = [];
+    this.coins = [];
     this.particles = [];
     this.floats = [];
-    this.shake = 0;
-    this.lastSafe = { x: s.x, y: s.y };
+    this.trail = [];
 
-    this.onLevel({
-      index: i,
-      total: LEVEL_COUNT,
-      theme: this.map.theme,
-      node: NODES[i] || NODES[NODE_COUNT - 1],
-    });
+    this.rng = makeRng(Date.now() >>> 0);
+    this.bestiary = new Set();
+
+    this._last = 0;
+    this._acc = 0;
+
+    this.resize();
+    if (typeof ResizeObserver !== 'undefined') {
+      this._ro = new ResizeObserver(() => this.resize());
+      this._ro.observe(canvas.parentElement || canvas);
+    }
+    window.addEventListener('resize', () => this.resize());
+
+    // 先载入第 0 关做背景预览（HUD 也依赖 player 存在）
+    this.loadLevel(0);
+
+    this._loop = this._loop.bind(this);
+    requestAnimationFrame(this._loop);
   }
 
-  /**
-   * 往关卡里填东西：钥匙、终点宝箱、药水、怪物。
-   * 全部按「被深渊切分出的区段」分布，保证每段都有内容、也都不会卡死。
-   */
-  _populate() {
-    const rng = this.rng;
-    const map = this.map;
-    const segs = map.segments;
-    const idx = this.levelIndex;
-    const used = [];
-    const farEnough = (p, min) => used.every((u) => Math.hypot(u.x - p.x, u.y - p.y) > min);
+  /* ================= 生命周期 ================= */
 
-    // ① 钥匙：放在中后段，常常需要冲刺跨过深渊才能拿到
-    const keySeg = segs[Math.min(segs.length - 1, Math.floor(segs.length * 0.5))];
-    const keySpot = map.randomFloorIn(keySeg.x0, keySeg.x1);
-    if (keySpot) {
-      this.pickups.push(new Pickup('key', keySpot.x, keySpot.y));
-      used.push(keySpot);
-    }
-
-    // ② 终点宝箱：最右侧，拿到钥匙才能开
-    this.pickups.push(new Pickup('chest', map.exit.x, map.exit.y, idx));
-    used.push({ x: map.exit.x, y: map.exit.y });
-
-    // ③ 药水：散落各段
-    const potionCount = Math.min(4, 2 + Math.floor(idx / 4));
-    for (let i = 0; i < potionCount; i++) {
-      const seg = segs[(i * 2 + 1) % segs.length];
-      for (let k = 0; k < 20; k++) {
-        const s = map.randomFloorIn(seg.x0, seg.x1);
-        if (s && farEnough(s, 60)) { this.pickups.push(new Pickup('potion', s.x, s.y)); used.push(s); break; }
-      }
-    }
-
-    // ④ 怪物：关卡越靠后，数量越多、越容易出精英
-    const perSeg = Math.min(3, 1 + Math.floor(idx / 4));
-    segs.forEach((seg, si) => {
-      const n = perSeg + (si % 2 === 0 ? 1 : 0);
-      for (let i = 0; i < n; i++) {
-        for (let k = 0; k < 16; k++) {
-          const s = map.randomFloorIn(seg.x0, seg.x1);
-          if (!s) break;
-          if (Math.hypot(s.x - this.map.spawn.x, s.y - this.map.spawn.y) < 150) continue; // 别贴脸出生点
-          if (!farEnough(s, 46)) continue;
-          const roll = rng();
-          let id;
-          if (idx >= 4 && roll > 0.9) id = 'golem';
-          else if (roll > 0.5) id = 'moth';
-          else id = 'slime';
-          this.enemies.push(new Enemy(id, s.x, s.y, rng));
-          used.push(s);
-          break;
-        }
-      }
-    });
+  setState(s) {
+    if (this.state === s) return;
+    this.state = s;
+    this.hooks.onStateChange?.(s);
   }
 
-  /* ------------------------------ 状态控制 ------------------------------ */
   start() {
-    if (this.state === 'won' || this.state === 'over') this.newRun();
-    if (this.state !== 'idle') return; // running / reveal / paused 时不重复触发
-    this.lastTs = 0;
-    this._setState('running');
+    this.score = 0;
+    this.kills = 0;
+    this.nodesFound = 0;
+    this.timeMs = 0;
+    this.levelIndex = 0;
+    this.pendingLevels = 0;
+    this.perkPicks = null;
+    this.bestiary = new Set();
+    this.player = null;
+    this.rng = makeRng(Date.now() >>> 0);
+    this.loadLevel(0);
+    this.setState('running');
   }
-  pause() { if (this.state === 'running') this._setState('paused'); }
-  resume() { if (this.state === 'paused' || this.state === 'levelup') { this.lastTs = 0; this._setState('running'); } }
+
+  loadLevel(i) {
+    const map = generateLevel(i, this.rng);
+    this.map = map;
+    this.levelIndex = i;
+    this.hasKey = false;
+    this.chestOpen = false;
+    this.lockedHintCd = 0;
+
+    if (!this.player) this.player = new Player(map.spawn.x, map.spawn.groundY);
+    else {
+      const p = this.player;
+      p.x = map.spawn.x;
+      p.y = map.spawn.groundY - p.hh - 1;
+      p.vx = 0; p.vy = 0; p.kx = 0;
+      p.grounded = false;
+      p.jumpsLeft = p.stats.maxJumps;
+      p.lastSafe = { x: p.x, y: p.y };
+    }
+
+    this.enemies = map.enemies.map((e) => new Enemy(e.id, e.x, e.y, this.rng));
+    this.pickups = map.pickups.map((p) => new Pickup(p.kind, p.x, p.y));
+    this.coins = map.coins.map((c) => new Pickup('coin', c.x, c.y));
+    this.keyPickup = new Pickup('key', map.key.x, map.key.y);
+    this.particles.length = 0;
+    this.floats.length = 0;
+    this.trail.length = 0;
+
+    this.cam.x = clamp(this.player.x - VIEW.w * 0.42, 0, Math.max(0, map.worldW - VIEW.w));
+    this.cam.y = clamp(this.player.y - VIEW.h * 0.55, 0, Math.max(0, map.worldH - VIEW.h));
+    this.hooks.onLevel?.({ index: i, theme: map.theme });
+  }
+
+  pause() { if (this.state === 'running') this.setState('paused'); }
+  resume() { if (this.state === 'paused') this.setState('running'); }
   togglePause() {
     if (this.state === 'running') this.pause();
     else if (this.state === 'paused') this.resume();
-    else if (this.state === 'idle') this.start();
+    else if (this.state === 'idle' || this.state === 'over') this.start();
   }
 
-  /** 宝藏展示完毕，玩家按键继续：进入下一关 or 通关 */
-  continueAfterReveal() {
-    if (this.state !== 'reveal') return;
-    if (this.levelIndex + 1 >= LEVEL_COUNT) this._end('win');
-    else {
-      this.loadLevel(this.levelIndex + 1);
-      this.lastTs = 0;
-      this._setState('running');
-    }
+  end(reason) {
+    this.setState('over');
+    this.hooks.onEnd?.({
+      reason,
+      score: Math.round(this.score),
+      nodes: this.nodesFound,
+      kills: this.kills,
+      timeMs: this.timeMs,
+      levelIndex: this.levelIndex,
+      bestiary: [...this.bestiary],
+    });
   }
 
-  _setState(s) {
-    if (this.state === s) return;
-    this.state = s;
-    this.onStateChange(s);
-  }
+  /* ================= 输入 ================= */
 
-  /* ------------------------------ 玩家动作 ------------------------------ */
-  tryAttack() {
-    if (this.state === 'idle') this.start();
+  pressJump() {
     if (this.state !== 'running') return;
-    const atk = this.player.attack();
-    if (!atk) return;
+    this.input.jumpHeld = true;
+    this.player.pressJump();
+  }
+  releaseJump() { this.input.jumpHeld = false; }
 
-    const half = (atk.arc * DEG) / 2;
+  tryAttack() {
+    if (this.state !== 'running') return;
+    const a = this.player.attack();
+    if (!a) return;
     for (const e of this.enemies) {
       if (e.dead) continue;
-      const dx = e.x - atk.x;
-      const dy = e.y - atk.y;
-      const d = Math.hypot(dx, dy);
-      if (d > atk.range + e.r) continue;
-      if (Math.abs(angleDiff(Math.atan2(dy, dx), atk.angle)) > half) continue;
-
-      const crit = Math.random() < this.player.stats.crit;
-      let dmg = this.player.stats.damage * (crit ? this.player.stats.critMul : 1);
-      dmg = Math.round(dmg);
-      const dealt = e.takeDamage(dmg, this.player.x, this.player.y);
-      this._float(e.x, e.y - e.r - 6, `${crit ? '暴击 ' : ''}${dealt}`, crit ? '#ffd166' : '#ffffff');
-      this._burst(e.x, e.y, e.type.color, 6);
-      this.onHit({ crit, dealt, enemy: e });
-
-      if (this.player.stats.lifesteal > 0) {
-        const healed = this.player.heal(dealt * this.player.stats.lifesteal);
-        if (healed >= 1) this._float(this.player.x, this.player.y - 20, `+${healed}`, '#69f0ae');
+      if (Math.abs(e.x - a.x) < a.hw + e.hw && Math.abs(e.y - a.y) < a.hh + e.hh) {
+        this.hurtEnemy(e, e.x, 0.6);
       }
-      if (e.dead) this._onEnemyDead(e);
     }
-    this.shake = Math.min(6, this.shake + 2.5);
   }
 
   tryDash() {
-    if (this.state === 'idle') this.start();
     if (this.state !== 'running') return;
-    if (this.player.tryDash()) this._burst(this.player.x, this.player.y, '#00e5ff', 10);
-  }
-
-  _onEnemyDead(e) {
-    this.kills += 1;
-    const ups = this.player.gainXp(e.type.xp);
-    this.pendingLevels += ups;
-    this._burst(e.x, e.y, e.type.color, 18);
-    this.onKill(e.type);
-    if (ups > 0) this._openLevelUp();
-  }
-
-  /* ------------------------------ 升级三选一 ------------------------------ */
-  _openLevelUp() {
-    const pool = PERKS.slice();
-    const picks = [];
-    while (picks.length < 3 && pool.length) {
-      picks.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+    if (!this.player.tryDash()) return;
+    for (let i = 0; i < 8; i++) {
+      this.particle(this.player.x, this.player.y + rnd(-8, 8), rnd(-30, 30), rnd(-20, 20), '#7ef9ff', 0.3, 3);
     }
-    this._setState('levelup');
-    this.onLevelUp(picks);
   }
 
   choosePerk(id) {
     const perk = PERKS.find((p) => p.id === id);
-    if (!perk) return;
-    perk.apply(this.player.stats);
-    this.pendingLevels = Math.max(0, this.pendingLevels - 1);
-    if (this.pendingLevels > 0) this._openLevelUp();
-    else { this.lastTs = 0; this._setState('running'); }
+    if (perk && this.player) {
+      perk.apply(this.player.stats);
+      this.perkPicks = null;
+    }
+    this.pendingLevels -= 1;
+    if (this.pendingLevels > 0) {
+      this.hooks.onLevelUp?.(this.rollPerks());
+      this.state = 'levelup';
+      return;
+    }
+    this.setState('running');
   }
 
-  /* ------------------------------ 主循环 ------------------------------ */
-  _loop(ts) {
-    this._raf = requestAnimationFrame(this._loop);
-    if (!this.lastTs) this.lastTs = ts;
-    let dt = (ts - this.lastTs) / 1000;
-    this.lastTs = ts;
-    if (dt > 0.05) dt = 0.05; // 卡顿保护
+  rollPerks() {
+    const owned = new Set(this.player.perkLog || []);
+    const pool = PERKS.filter((p) => !p.unique || !owned.has(p.id));
+    const picks = [];
+    const copy = pool.slice();
+    while (picks.length < 3 && copy.length) picks.push(copy.splice(Math.floor(this.rng() * copy.length), 1)[0]);
+    this.perkPicks = picks;
+    return picks;
+  }
 
-    // reveal = 宝藏展示中：整个世界冻结（怪物不动、不掉血、不计时）
-    if (this.state === 'running') {
-      this.time += dt;
-      this.timeMs += dt * 1000;
-      this.update(dt);
+  continueAfterReveal() {
+    if (this.state !== 'reveal') return;
+    if (this.levelIndex + 1 >= LEVEL_COUNT) {
+      this.score += CONFIG.score.winBonus;
+      this.end('win');
+      return;
     }
-    this.shake = Math.max(0, this.shake - dt * 22);
-    this._updateFx(dt);
-    this.render();
+    this.loadLevel(this.levelIndex + 1);
+    this.setState('running');
+  }
+
+  /* ================= 主循环 ================= */
+
+  _loop(ts) {
+    if (!this._last) this._last = ts;
+    let dt = (ts - this._last) / 1000;
+    this._last = ts;
+    dt = Math.min(dt, 0.1);
+    this.time += dt;
+
+    // 单帧异常不应该让整个画面卡死：记录后继续下一帧
+    try {
+      if (this.state === 'running') {
+        this._acc += dt;
+        const STEP = 1 / 60;
+        let guard = 0;
+        while (this._acc >= STEP && guard++ < 6) {
+          this.update(STEP);
+          this._acc -= STEP;
+        }
+        if (guard >= 6) this._acc = 0;
+        this.updateFx(dt);
+      }
+      this.render();
+    } catch (err) {
+      this._errCount = (this._errCount || 0) + 1;
+      if (this._errCount <= 2) console.error('[adv] frame error:', err);
+      this._acc = 0;
+    }
+    requestAnimationFrame(this._loop);
   }
 
   update(dt) {
     const p = this.player;
-    p.update(dt, this.input, this.map);
+    const map = this.map;
+    this.timeMs += dt * 1000;
+    this.lockedHintCd = Math.max(0, this.lockedHintCd - dt);
 
-    // —— 深渊判定：冲刺中高速掠过可跨越，否则掉落扣血退回安全点
-    if (tileAt(this.map, p.x, p.y) === TILE.PIT) {
-      if (p.dashTimer <= 0) {
-        const dmg = p.fall(this.lastSafe.x, this.lastSafe.y);
-        this._float(p.x, p.y - 26, `-${dmg} 坠落`, '#ff6b8a');
-        this._burst(p.x, p.y, '#7c4dff', 14);
-        this.shake = Math.min(14, this.shake + 11);
-        this.onHurt(dmg);
+    p.jumpedNow = false;
+    p.doubleJumpNow = false;
+    p.headBump = false;
+    p.update(dt, this.input, map);
+
+    /* 起跳 / 落地特效 */
+    if (p.jumpedNow) this.puffJump(p.x, p.y + p.hh);
+    if (p.doubleJumpNow) {
+      for (let i = 0; i < 10; i++) {
+        const a = (i / 10) * Math.PI * 2;
+        this.particle(p.x, p.y + p.hh - 2, Math.cos(a) * 70, Math.sin(a) * 30, '#7ef9ff', 0.35, 3);
       }
-    } else if (!circleHitsWall(this.map, p.x, p.y, p.r)) {
-      // 记录最后一个站得住的位置，坠落时退回这里
-      this.lastSafe = { x: p.x, y: p.y };
+    }
+    if (p.justLanded) {
+      for (let i = 0; i < 6; i++) {
+        this.particle(p.x + rnd(-6, 6), p.y + p.hh, rnd(-70, 70), rnd(-60, -10), 'rgba(200,220,255,.8)', 0.32, 2.6);
+      }
+    }
+    if (Math.abs(p.vx) > 40 && p.grounded && Math.random() < dt * 6) {
+      this.particle(p.x - Math.sign(p.vx) * 6, p.y + p.hh, -Math.sign(p.vx) * 30, -20, 'rgba(180,210,255,.5)', 0.24, 2);
+    }
+    if (p.dashTimer > 0) this.trail.push({ x: p.x, y: p.y, life: 0.22, dir: p.dashDir || p.facing });
+
+    /* 掉出世界（掉坑）：少量掉血 + 安全点重生 */
+    if (p.y - p.hh > map.worldH + 24) {
+      const dmg = p.fall(p.lastSafe);
+      this.floatText(p.x, p.y - 20, `-${dmg}`, '#ff4081');
+      this.shake = 7;
+      this.hooks.onHurt?.({ amount: dmg, reason: 'pit' });
+      if (p.hp <= 0) { this.end('dead'); return; }
     }
 
-    // 迷雾 + 相机
-    markExplored(this.map, p.x, p.y, 7);
-    const vw = this.view.w / this.zoom;
-    const vh = this.view.h / this.zoom;
-    this.camera.x += (Math.max(vw / 2, Math.min(p.x, this.map.worldW - vw / 2)) - this.camera.x) * Math.min(1, dt * 9);
-    this.camera.y += (Math.max(vh / 2, Math.min(p.y, this.map.worldH - vh / 2)) - this.camera.y) * Math.min(1, dt * 9);
+    /* 尖刺 */
+    if (this.touchTile(p, TI.SPIKE)) {
+      const dmg = p.takeDamage(CONFIG.combat.spikeDamage, p.x + p.facing * 14);
+      if (dmg > 0) {
+        this.floatText(p.x, p.y - 20, `-${dmg}`, '#ff4081');
+        this.shake = 5;
+        this.hooks.onHurt?.({ amount: dmg, reason: 'spike' });
+        if (p.hp <= 0) { this.end('dead'); return; }
+      }
+    }
 
-    // 怪物
+    /* 敌人 */
     for (const e of this.enemies) {
       if (e.dead) continue;
-      e.update(dt, p, this.map, this.time);
-      const d = Math.hypot(e.x - p.x, e.y - p.y);
-      if (d < 360) this.bestiary.add(e.type.id);
+      e.update(dt, p, map, this.time);
+      if (Math.abs(e.x - p.x) < VIEW.w * 0.6) {
+        if (!this.bestiary.has(e.id)) { this.bestiary.add(e.id); this.hooks.onMeet?.(e.type); }
+      }
+
+      const overlapX = Math.abs(p.x - e.x) < p.hw + e.hw * 0.92;
+      const overlapY = Math.abs(p.y - e.y) < p.hh + e.hh * 0.92;
+      if (!overlapX || !overlapY) continue;
+
+      // 踩踏：下落中且脚在怪物上半身
+      const stomping = p.vy > 60 && (p.y + p.hh) - e.y < e.hh * 0.75;
+      if (stomping) {
+        const dealt = e.takeDamage(p.stats.damage * p.stats.stompMul, p.x);
+        p.vy = -(this.input.jumpHeld ? CONFIG.combat.stompBounce * 1.28 : CONFIG.combat.stompBounce);
+        p.jumpsLeft = Math.max(p.jumpsLeft, 1);
+        this.floatText(e.x, e.y - e.hh - 6, `${Math.round(dealt)}`, '#ffd166');
+        this.burst(e.x, e.y, e.type.color, 10);
+        this.hooks.onHit?.({ crit: false, stomp: true, amount: dealt });
+        if (p.stats.lifesteal) p.heal(dealt * p.stats.lifesteal);
+        if (e.dead) this.killEnemy(e);
+        continue;
+      }
 
       // 接触伤害
-      if (d < e.r + p.r && e.touchCd <= 0) {
-        const dealt = p.takeDamage(e.type.dmg, e.x, e.y);
-        e.touchCd = CONFIG.combat.enemyTouchCd;
-        if (dealt > 0) {
-          this._float(p.x, p.y - 22, `-${dealt}`, '#ff6b8a');
-          this.shake = Math.min(12, this.shake + 9);
-          this.onHurt(dealt);
+      if (e.touchCd <= 0) {
+        const dmg = p.takeDamage(e.type.dmg, e.x);
+        if (dmg > 0) {
+          e.touchCd = CONFIG.combat.enemyTouchCd;
+          this.floatText(p.x, p.y - 22, `-${dmg}`, '#ff4081');
+          this.shake = 6;
+          this.hooks.onHurt?.({ amount: dmg, reason: 'enemy' });
+          if (p.hp <= 0) { this.end('dead'); return; }
         }
       }
     }
-    this._separateEnemies();
 
-    // 拾取物
+    /* 拾取：金币 / 药水 / 钥匙 */
+    for (const c of this.coins) {
+      if (c.taken) continue;
+      if (Math.abs(c.x - p.x) < p.hw + 12 && Math.abs(c.y - p.y) < p.hh + 12) {
+        c.taken = true;
+        this.score += CONFIG.score.coin;
+        this.burst(c.x, c.y, '#ffd166', 5);
+        this.hooks.onPickup?.({ kind: 'coin' });
+      }
+    }
     for (const it of this.pickups) {
       if (it.taken) continue;
-      if (Math.hypot(it.x - p.x, it.y - p.y) > it.r + p.r) continue;
-      if (it.kind === 'chest') this._openChest(it);
-      else if (it.kind === 'key') this._takeKey(it);
-      else {
-        const healed = p.heal(CONFIG.combat.potionHeal);
+      if (Math.abs(it.x - p.x) < p.hw + it.hw && Math.abs(it.y - p.y) < p.hh + it.hh) {
         it.taken = true;
-        this._float(p.x, p.y - 24, `+${healed} HP`, '#69f0ae');
-        this._burst(it.x, it.y, '#69f0ae', 12);
-        this.onPickup({ kind: 'potion', healed });
+        const healed = this.player.heal(CONFIG.combat.potionHeal);
+        this.hooks.onPickup?.({ kind: 'potion', healed });
+        this.burst(it.x, it.y, '#69f0ae', 10);
+      }
+    }
+    if (!this.hasKey && Math.abs(this.keyPickup.x - p.x) < p.hw + 18 && Math.abs(this.keyPickup.y - p.y) < p.hh + 20) {
+      this.hasKey = true;
+      this.burst(this.keyPickup.x, this.keyPickup.y, '#ffd166', 18);
+      this.hooks.onPickup?.({ kind: 'key' });
+    }
+
+    /* 终点宝箱 */
+    const ch = this.chestBox();
+    if (Math.abs(ch.x - p.x) < ch.hw + p.hw && Math.abs(ch.y - p.y) < ch.hh + p.hh) {
+      if (this.hasKey) this.openChest();
+      else if (this.lockedHintCd <= 0) {
+        this.lockedHintCd = 1.6;
+        this.hooks.onPickup?.({ kind: 'locked' });
       }
     }
 
-    this.enemies = this.enemies.filter((e) => !e.dead);
-
-    if (p.hp <= 0) this._end('dead');
+    this.updateCamera(dt);
   }
 
-  _takeKey(it) {
-    it.taken = true;
-    this.hasKey = true;
-    this._burst(it.x, it.y, '#ffd166', 16);
-    this.onPickup({ kind: 'key' });
+  chestBox() {
+    return { x: this.map.chest.x, y: this.map.chest.groundY - 15, hw: 16, hh: 15 };
   }
 
-  /** 终点宝箱：有钥匙则冻结展示节点，没钥匙则提示 */
-  _openChest(chest) {
-    if (!this.hasKey) {
-      const now = performance.now();
-      if (!this._lockHintAt || now - this._lockHintAt > 1600) {
-        this._lockHintAt = now;
-        this.onPickup({ kind: 'locked' });
-      }
-      return;
+  hurtEnemy(e, fromX, mul = 1) {
+    const p = this.player;
+    let dmg = p.stats.damage * mul;
+    const crit = Math.random() < p.stats.crit;
+    if (crit) dmg *= p.stats.critMul;
+    dmg = Math.round(dmg);
+    e.takeDamage(dmg, fromX);
+    this.floatText(e.x, e.y - e.hh - 6, crit ? `${dmg}!` : `${dmg}`, crit ? '#ff4081' : '#ffffff');
+    this.burst(e.x, e.y, crit ? '#ff4081' : '#ffffff', crit ? 12 : 7);
+    this.hooks.onHit?.({ crit, stomp: false, amount: dmg });
+    if (p.stats.lifesteal) p.heal(dmg * p.stats.lifesteal);
+    if (e.dead) this.killEnemy(e);
+    return dmg;
+  }
+
+  killEnemy(e) {
+    this.kills += 1;
+    this.score += CONFIG.score.kill;
+    this.burst(e.x, e.y, e.type.color, 16);
+    const ups = this.player.gainXp(e.type.xp);
+    this.hooks.onKill?.(e.type);
+    if (ups > 0) {
+      this.pendingLevels += ups;
+      this.hooks.onLevelUp?.(this.rollPerks());
+      this.setState('levelup');
     }
-    chest.taken = true;
-    const index = Math.min(this.nodesFound, NODE_COUNT - 1);
+  }
+
+  openChest() {
+    if (this.state !== 'running') return;
+    const idx = this.levelIndex;
+    this.chestOpen = true;
     this.nodesFound += 1;
-    this._burst(chest.x, chest.y, '#ffd166', 26);
-    // 冻结整个世界，等 UI 展示完节点详情、玩家按键后再继续
-    this._setState('reveal');
-    this.onNode(index, chest.x, chest.y);
-  }
-
-  /** 怪物互相推挤，避免完全重叠成一坨 */
-  _separateEnemies() {
-    for (let i = 0; i < this.enemies.length; i++) {
-      for (let j = i + 1; j < this.enemies.length; j++) {
-        const a = this.enemies[i];
-        const b = this.enemies[j];
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const d = Math.hypot(dx, dy) || 1;
-        const min = a.r + b.r - 2;
-        if (d < min) {
-          const push = (min - d) / 2;
-          const nx = (dx / d) * push;
-          const ny = (dy / d) * push;
-          if (!circleHitsWall(this.map, a.x - nx, a.y - ny, a.r)) { a.x -= nx; a.y -= ny; }
-          if (!circleHitsWall(this.map, b.x + nx, b.y + ny, b.r)) { b.x += nx; b.y += ny; }
-        }
-      }
+    this.score += CONFIG.score.node;
+    this.setState('reveal');
+    this.revealAt = performance.now();
+    const c = this.map.chest;
+    for (let i = 0; i < 46; i++) {
+      this.particle(c.x + rnd(-14, 14), c.groundY - 16, rnd(-160, 160), rnd(-320, -80), i % 3 ? '#ffd166' : '#00e5ff', 1.1, 3.4);
     }
+    this.hooks.onNode?.(idx, c.x, c.groundY);
   }
 
-  _end(reason) {
-    this._setState(reason === 'win' ? 'won' : 'over');
-    this.onEnd(this.result(reason));
+  updateCamera(dt) {
+    const p = this.player;
+    const map = this.map;
+    const tx = clamp(p.x - VIEW.w * 0.42, 0, Math.max(0, map.worldW - VIEW.w));
+    const ty = clamp(p.y - VIEW.h * 0.55, 0, Math.max(0, map.worldH - VIEW.h));
+    const k = 1 - Math.pow(0.0008, dt);
+    this.cam.x += (tx - this.cam.x) * k;
+    this.cam.y += (ty - this.cam.y) * k;
+    if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 34);
   }
 
-  result(reason = 'dead') {
-    return {
-      reason,
-      nodes: this.nodesFound,
-      kills: this.kills,
-      timeMs: this.timeMs,
-      level: this.player.level,
-      score: this.score,
-      bestiary: [...this.bestiary],
-      hp: Math.round(this.player.hp),
-      maxHp: Math.round(this.player.stats.maxHp),
-      levelIndex: this.levelIndex,
-      levelTotal: LEVEL_COUNT,
-    };
-  }
+  /* ================= 特效 ================= */
 
-  get score() {
-    const s = CONFIG.score;
-    return this.nodesFound * s.node + this.kills * s.kill + (this.nodesFound >= NODE_COUNT ? s.winBonus : 0);
-  }
-
-  /* ------------------------------ 特效 ------------------------------ */
-  _burst(x, y, color, n = 10) {
-    for (let i = 0; i < n; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const sp = 60 + Math.random() * 220;
-      this.particles.push({
-        x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-        life: 1, size: 1.5 + Math.random() * 2.6, color,
-      });
-    }
-  }
-  _float(x, y, text, color) {
-    this.floats.push({ x, y, text, color, life: 1 });
-  }
-  _updateFx(dt) {
+  updateFx(dt) {
     for (let i = this.particles.length - 1; i >= 0; i--) {
-      const p = this.particles[i];
-      p.x += p.vx * dt; p.y += p.vy * dt;
-      p.vx *= 0.93; p.vy *= 0.93;
-      p.life -= dt * 1.9;
-      if (p.life <= 0) this.particles.splice(i, 1);
+      const q = this.particles[i];
+      q.life -= dt;
+      if (q.life <= 0) { this.particles.splice(i, 1); continue; }
+      q.vy += (q.grav || 520) * dt;
+      q.x += q.vx * dt;
+      q.y += q.vy * dt;
     }
     for (let i = this.floats.length - 1; i >= 0; i--) {
       const f = this.floats[i];
-      f.y -= dt * 34;
-      f.life -= dt * 1.25;
-      if (f.life <= 0) this.floats.splice(i, 1);
+      f.life -= dt;
+      if (f.life <= 0) { this.floats.splice(i, 1); continue; }
+      f.y -= dt * 26;
+    }
+    for (let i = this.trail.length - 1; i >= 0; i--) {
+      this.trail[i].life -= dt;
+      if (this.trail[i].life <= 0) this.trail.splice(i, 1);
     }
   }
 
-  /* ------------------------------ 渲染 ------------------------------ */
+  particle(x, y, vx, vy, color, life = 0.4, size = 3, grav = 520) {
+    if (this.particles.length > 320) return;
+    this.particles.push({ x, y, vx, vy, color, life, max: life, size, grav });
+  }
+  burst(x, y, color, n = 10) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = rnd(60, 220);
+      this.particle(x, y, Math.cos(a) * s, Math.sin(a) * s - 40, color, rnd(0.3, 0.6), rnd(2, 4));
+    }
+  }
+  puffJump(x, y) {
+    for (let i = 0; i < 7; i++) this.particle(x + rnd(-5, 5), y, rnd(-80, 80), rnd(-40, 10), 'rgba(190,220,255,.75)', 0.3, 2.6, 260);
+  }
+  floatText(x, y, text, color) {
+    if (this.floats.length > 22) this.floats.shift();
+    this.floats.push({ x, y, text, color, life: 0.9, max: 0.9 });
+  }
+  touchTile(p, type) {
+    const x0 = Math.floor((p.x - p.hw) / T);
+    const x1 = Math.floor((p.x + p.hw - 0.001) / T);
+    const y0 = Math.floor((p.y - p.hh) / T);
+    const y1 = Math.floor((p.y + p.hh - 0.001) / T);
+    for (let ty = y0; ty <= y1; ty++) {
+      for (let tx = x0; tx <= x1; tx++) if (tileAt(this.map, tx, ty) === type) return true;
+    }
+    return false;
+  }
+
+  /* ================= 画布尺寸 ================= */
+
   resize() {
     const parent = this.canvas.parentElement || this.canvas;
     const rect = parent.getBoundingClientRect();
-    const w = Math.max(280, rect.width);
-    const h = Math.max(220, Math.min(rect.height || rect.width * 0.62, 620));
+    const cssW = Math.max(280, rect.width);
+    const cssH = Math.max(200, rect.height || cssW * (VIEW.h / VIEW.w));
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    this.zoom = w < 520 ? 1.05 : 1.25; // 关卡里视野拉近一点，看得清怪
-    this.view = { w, h };
+    this.cssW = cssW;
+    this.cssH = cssH;
     this.dpr = dpr;
-    this.canvas.width = Math.round(w * dpr);
-    this.canvas.height = Math.round(h * dpr);
-    this.canvas.style.width = `${w}px`;
-    this.canvas.style.height = `${h}px`;
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.canvas.width = Math.round(cssW * dpr);
+    this.canvas.height = Math.round(cssH * dpr);
+    this.canvas.style.width = `${cssW}px`;
+    this.canvas.style.height = `${cssH}px`;
+    // letterbox：等比缩放并居中，保证可视世界范围恒为 720×416
+    this.scale = Math.min(cssW / VIEW.w, cssH / VIEW.h);
+    this.offX = (cssW - VIEW.w * this.scale) / 2;
+    this.offY = (cssH - VIEW.h * this.scale) / 2;
   }
+
+  /* ================= 渲染 ================= */
 
   render() {
     const ctx = this.ctx;
-    const { w, h } = this.view;
-    if (!w || !h) return;
-    ctx.clearRect(0, 0, w, h);
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.clearRect(0, 0, this.cssW, this.cssH);
+    ctx.fillStyle = '#05070f';
+    ctx.fillRect(0, 0, this.cssW, this.cssH);
     if (!this.map) return;
 
-    const T = CONFIG.tile;
-    const th = this.map.theme;
-    const vw = w / this.zoom;
-    const vh = h / this.zoom;
-    const shakeX = (Math.random() - 0.5) * this.shake;
-    const shakeY = (Math.random() - 0.5) * this.shake;
-
     ctx.save();
-    ctx.scale(this.zoom, this.zoom);
-    ctx.translate(vw / 2 - this.camera.x + shakeX, vh / 2 - this.camera.y + shakeY);
+    ctx.translate(this.offX, this.offY);
+    ctx.scale(this.scale, this.scale);
+    ctx.beginPath();
+    ctx.rect(0, 0, VIEW.w, VIEW.h);
+    ctx.clip();
 
-    const x0 = Math.max(0, Math.floor((this.camera.x - vw / 2) / T) - 1);
-    const x1 = Math.min(this.map.cols - 1, Math.ceil((this.camera.x + vw / 2) / T) + 1);
-    const y0 = Math.max(0, Math.floor((this.camera.y - vh / 2) / T) - 1);
-    const y1 = Math.min(this.map.rows - 1, Math.ceil((this.camera.y + vh / 2) / T) + 1);
+    this.drawSky();
 
-    // 背景底
-    ctx.fillStyle = '#05070f';
-    ctx.fillRect(x0 * T, y0 * T, (x1 - x0 + 1) * T, (y1 - y0 + 1) * T);
+    const sh = this.shake > 0.2 ? this.shake : 0;
+    ctx.save();
+    ctx.translate(-Math.round(this.cam.x) + rnd(-sh, sh), -Math.round(this.cam.y) + rnd(-sh, sh));
+    this.drawTiles();
+    this.drawCoins();
+    this.drawKey();
+    this.drawChest();
+    for (const it of this.pickups) it.draw(ctx, this.time);
+    for (const e of this.enemies) if (!e.dead) e.draw(ctx, this.time);
+    if (this.player) this.drawPlayer();
+    this.drawFx();
+    ctx.restore();
 
-    for (let ty = y0; ty <= y1; ty++) {
-      for (let tx = x0; tx <= x1; tx++) {
-        const t = this.map.grid[ty * this.map.cols + tx];
-        const wx = tx * T;
-        const wy = ty * T;
-        if (t === TILE.WALL) {
-          // 区分边缘墙与内部墙：只有挨着通道的墙才用主题色，
-          // 通道上方的整片墙体画成暗色，避免上半屏一片色块、突出地面轮廓
-          const aboveOpen = ty > 0 && this.map.grid[(ty - 1) * this.map.cols + tx] !== TILE.WALL;
-          const belowOpen = ty < this.map.rows - 1 && this.map.grid[(ty + 1) * this.map.cols + tx] !== TILE.WALL;
-          const leftOpen = tx > 0 && this.map.grid[ty * this.map.cols + tx - 1] !== TILE.WALL;
-          const rightOpen = tx < this.map.cols - 1 && this.map.grid[ty * this.map.cols + tx + 1] !== TILE.WALL;
-          const edge = aboveOpen || belowOpen || leftOpen || rightOpen;
-          ctx.fillStyle = edge ? th.wall : '#060a14';
-          ctx.fillRect(wx, wy, T, T);
-          if (aboveOpen) {
-            ctx.fillStyle = th.accent;
-            ctx.globalAlpha = 0.55;
-            ctx.fillRect(wx, wy, T, 3);
-            ctx.globalAlpha = 1;
+    this.drawGuide();
+    ctx.restore();
+  }
+
+  drawSky() {
+    const ctx = this.ctx;
+    const th = this.map.theme;
+    const g = ctx.createLinearGradient(0, 0, 0, VIEW.h);
+    g.addColorStop(0, th.sky[0]);
+    g.addColorStop(1, th.sky[1]);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, VIEW.w, VIEW.h);
+
+    // 星星（稳定位置）
+    ctx.fillStyle = 'rgba(255,255,255,.55)';
+    for (let i = 0; i < 40; i++) {
+      const sx = (hash(i * 3.1) * VIEW.w * 1.6 - this.cam.x * 0.08) % VIEW.w;
+      const x = sx < 0 ? sx + VIEW.w : sx;
+      const y = hash(i * 7.7) * VIEW.h * 0.55;
+      const a = 0.25 + Math.abs(Math.sin(this.time * 1.4 + i)) * 0.5;
+      ctx.globalAlpha = a * 0.7;
+      ctx.fillRect(x, y, 1.6, 1.6);
+    }
+    ctx.globalAlpha = 1;
+
+    // 视差层
+    if (th.decor === 'cloud') {
+      this.drawDecor(th.far, 0.18, VIEW.h * 0.78, 'cloud');
+      this.drawDecor(th.mid, 0.34, VIEW.h * 0.86, 'peak');
+    } else {
+      this.drawDecor(th.far, 0.2, VIEW.h * 0.72, th.decor);
+      this.drawDecor(th.mid, 0.42, VIEW.h * 0.84, th.decor === 'city' ? 'block' : 'peak');
+    }
+
+    // 天空网格（科技感）
+    ctx.strokeStyle = 'rgba(140,190,255,.05)';
+    ctx.lineWidth = 1;
+    const gridOff = (this.cam.x * 0.1) % 60;
+    ctx.beginPath();
+    for (let x = -gridOff; x < VIEW.w; x += 60) { ctx.moveTo(x, 0); ctx.lineTo(x, VIEW.h); }
+    for (let y = 0; y < VIEW.h; y += 60) { ctx.moveTo(0, y); ctx.lineTo(VIEW.w, y); }
+    ctx.stroke();
+  }
+
+  drawDecor(color, factor, baseY, kind) {
+    const ctx = this.ctx;
+    ctx.fillStyle = color;
+    for (let i = 0; i < 9; i++) {
+      const w = 150 + hash(i * 5.3) * 180;
+      const h = 60 + hash(i * 9.1) * 130;
+      const period = VIEW.w + 420;
+      let x = (i * 210 - this.cam.x * factor) % period;
+      if (x < -420) x += period;
+      if (x > VIEW.w + 20) continue;
+      const y = baseY - h;
+      if (kind === 'cloud') {
+        ctx.globalAlpha = 0.5;
+        ctx.beginPath();
+        ctx.ellipse(x + w / 2, y + h / 2, w / 2, Math.max(14, h / 3.2), 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      } else if (kind === 'peak') {
+        ctx.beginPath();
+        ctx.moveTo(x, y + h);
+        ctx.lineTo(x + w / 2, y);
+        ctx.lineTo(x + w, y + h);
+        ctx.closePath();
+        ctx.fill();
+      } else {
+        // 城市天际线：错落的方块 + 零星亮窗
+        rr(ctx, x, y + h * 0.25, w * 0.6, h * 0.9, 4);
+        ctx.fill();
+        rr(ctx, x + w * 0.55, y + h * 0.05, w * 0.5, h * 1.05, 4);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,220,140,.35)';
+        for (let k = 0; k < 5; k++) {
+          if (hash(i * 13.7 + k) < 0.55) continue;
+          ctx.fillRect(x + w * 0.62 + hash(i * 3 + k) * w * 0.3, y + h * 0.2 + k * (h * 0.16), 3, 4);
+        }
+        ctx.fillStyle = color;
+      }
+    }
+  }
+
+  drawTiles() {
+    const ctx = this.ctx;
+    const map = this.map;
+    const th = map.theme;
+    const tx0 = Math.max(0, Math.floor(this.cam.x / T) - 1);
+    const tx1 = Math.min(map.cols - 1, tx0 + Math.ceil(VIEW.w / T) + 2);
+    const ty0 = Math.max(0, Math.floor(this.cam.y / T) - 1);
+    const ty1 = Math.min(map.rows - 1, ty0 + Math.ceil(VIEW.h / T) + 2);
+
+    for (let ty = ty0; ty <= ty1; ty++) {
+      for (let tx = tx0; tx <= tx1; tx++) {
+        const t = tileAt(map, tx, ty);
+        if (t === TI.AIR) continue;
+        const px = tx * T;
+        const py = ty * T;
+
+        if (t === TI.SPIKE) {
+          ctx.fillStyle = '#ff5470';
+          for (let k = 0; k < 2; k++) {
+            ctx.beginPath();
+            ctx.moveTo(px + k * 16, py + T);
+            ctx.lineTo(px + k * 16 + 8, py + 6);
+            ctx.lineTo(px + k * 16 + 16, py + T);
+            ctx.closePath();
+            ctx.fill();
           }
-        } else if (t === TILE.PIT) {
-          // 深渊：近乎全黑 + 四周与通道相接处画紫色霓虹边，提示「要冲刺跨越」
-          ctx.fillStyle = '#02040a';
-          ctx.fillRect(wx, wy, T, T);
-          const G = this.map.grid;
-          const u = ty > 0 ? G[(ty - 1) * this.map.cols + tx] : TILE.WALL;
-          const d = ty < this.map.rows - 1 ? G[(ty + 1) * this.map.cols + tx] : TILE.WALL;
-          const l = tx > 0 ? G[ty * this.map.cols + tx - 1] : TILE.WALL;
-          const r = tx < this.map.cols - 1 ? G[ty * this.map.cols + tx + 1] : TILE.WALL;
-          ctx.strokeStyle = 'rgba(124, 77, 255, 0.5)';
-          ctx.lineWidth = 2;
-          if (u !== TILE.PIT) { ctx.beginPath(); ctx.moveTo(wx, wy + 1); ctx.lineTo(wx + T, wy + 1); ctx.stroke(); }
-          if (d !== TILE.PIT) { ctx.beginPath(); ctx.moveTo(wx, wy + T - 1); ctx.lineTo(wx + T, wy + T - 1); ctx.stroke(); }
-          if (l !== TILE.PIT) { ctx.beginPath(); ctx.moveTo(wx + 1, wy); ctx.lineTo(wx + 1, wy + T); ctx.stroke(); }
-          if (r !== TILE.PIT) { ctx.beginPath(); ctx.moveTo(wx + T - 1, wy); ctx.lineTo(wx + T - 1, wy + T); ctx.stroke(); }
-        } else {
-          ctx.fillStyle = (tx + ty) % 2 ? th.floor : '#0b1220';
-          ctx.fillRect(wx, wy, T, T);
-          ctx.strokeStyle = 'rgba(110, 150, 240, 0.11)';
+          ctx.fillStyle = 'rgba(255,255,255,.35)';
+          ctx.fillRect(px, py + T - 3, T, 3);
+          continue;
+        }
+
+        const open = !isSolidAt(map, tx, ty - 1);
+        if (t === TI.BRICK) {
+          ctx.fillStyle = th.ground;
+          ctx.fillRect(px, py, T, T);
+          ctx.strokeStyle = 'rgba(0,0,0,.28)';
           ctx.lineWidth = 1;
-          ctx.strokeRect(wx + 0.5, wy + 0.5, T, T);
-          // 地面纹理：用小亮点暗示电路/星尘，让可行走区更有质感（稳定伪随机，不闪烁）
-          if ((tx * 7 + ty * 13) % 17 === 0) {
-            ctx.fillStyle = th.accent;
-            ctx.globalAlpha = 0.22;
-            ctx.fillRect(wx + T * 0.5 - 1, wy + T * 0.5 - 1, 2, 2);
-            ctx.globalAlpha = 1;
-          }
+          ctx.strokeRect(px + 0.5, py + 0.5, T - 1, T - 1);
+          ctx.strokeStyle = 'rgba(255,255,255,.06)';
+          ctx.beginPath();
+          ctx.moveTo(px + T / 2, py); ctx.lineTo(px + T / 2, py + T);
+          ctx.moveTo(px, py + T / 2); ctx.lineTo(px + T, py + T / 2);
+          ctx.stroke();
+        } else {
+          ctx.fillStyle = th.dirt;
+          ctx.fillRect(px, py, T, T);
+          ctx.fillStyle = 'rgba(255,255,255,.03)';
+          ctx.fillRect(px + 4, py + 6, 8, 3);
+          ctx.fillRect(px + 18, py + 20, 10, 3);
+        }
+
+        // 顶面草皮高光：一眼看出哪里可以站
+        if (open) {
+          ctx.fillStyle = th.grass;
+          ctx.fillRect(px, py, T, 4);
+          ctx.globalAlpha = 0.28;
+          ctx.fillRect(px, py + 4, T, 5);
+          ctx.globalAlpha = 1;
         }
       }
     }
+  }
 
-    // 终点光柱（宝箱所在地）
-    this._drawExit(ctx);
-
-    // 拾取物
-    for (const it of this.pickups) {
-      if (it.taken) continue;
-      const bob = Math.sin(this.time * 2.6 + it.bob) * 3;
-      if (it.kind === 'chest') this._drawChest(ctx, it.x, it.y + bob, this.hasKey);
-      else if (it.kind === 'key') this._drawKey(ctx, it.x, it.y + bob);
-      else this._drawPotion(ctx, it.x, it.y + bob);
+  drawCoins() {
+    const ctx = this.ctx;
+    for (const c of this.coins) {
+      if (c.taken) continue;
+      if (c.x < this.cam.x - 40 || c.x > this.cam.x + VIEW.w + 40) continue;
+      c.draw(ctx, this.time);
     }
+  }
 
-    // 怪物
-    for (const e of this.enemies) this._drawEnemy(ctx, e);
+  drawKey() {
+    if (this.hasKey) return;
+    const k = this.keyPickup;
+    if (k.x < this.cam.x - 40 || k.x > this.cam.x + VIEW.w + 40) return;
+    const ctx = this.ctx;
+    // 竖直光柱：远处也能看到钥匙在哪座塔顶
+    const grad = ctx.createLinearGradient(k.x, k.y - 260, k.x, k.y + 10);
+    grad.addColorStop(0, 'rgba(255,209,102,0)');
+    grad.addColorStop(1, 'rgba(255,209,102,.32)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(k.x - 9, k.y - 260, 18, 270);
+    k.draw(ctx, this.time);
+  }
 
-    // 玩家
-    this._drawPlayer(ctx);
+  drawChest() {
+    const ctx = this.ctx;
+    const c = this.map.chest;
+    const x = c.x;
+    const gy = c.groundY;
+    const t = this.time;
+    ctx.save();
+    ctx.translate(x, gy);
 
-    // 粒子 + 飘字
-    ctx.globalCompositeOperation = 'lighter';
-    for (const p of this.particles) {
-      ctx.globalAlpha = Math.max(0, p.life);
-      ctx.fillStyle = p.color;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    // 地面光晕
+    const glow = ctx.createRadialGradient(0, -14, 4, 0, -14, 46);
+    glow.addColorStop(0, this.hasKey ? 'rgba(255,209,102,.34)' : 'rgba(0,229,255,.16)');
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(0, -14, 46, 0, Math.PI * 2); ctx.fill();
+
+    const bob = Math.sin(t * 2.4) * 1.2;
+    ctx.translate(0, bob);
+
+    // 箱体
+    ctx.fillStyle = '#3a2a13';
+    rr(ctx, -18, -28, 36, 28, 4); ctx.fill();
+    ctx.fillStyle = '#54401d';
+    rr(ctx, -18, -28, 36, 10, 4); ctx.fill();
+    ctx.fillStyle = '#ffd166';
+    ctx.fillRect(-18, -21, 36, 3);
+    ctx.fillRect(-4, -28, 8, 28);
+
+    // 箱盖（开箱后掀开）
+    ctx.save();
+    ctx.translate(0, -28);
+    if (this.chestOpen) ctx.rotate(-0.9);
+    ctx.fillStyle = '#6b4a18';
+    rr(ctx, -19, -10, 38, 11, 4); ctx.fill();
+    ctx.fillStyle = '#ffd166';
+    ctx.fillRect(-19, -2, 38, 3);
+    ctx.restore();
+
+    // 锁扣 / 提示
+    if (!this.chestOpen) {
+      ctx.fillStyle = '#1a1408';
+      rr(ctx, -5, -20, 10, 10, 2); ctx.fill();
+      ctx.font = '9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = this.hasKey ? '#ffd166' : 'rgba(255,255,255,.75)';
+      ctx.fillText(this.hasKey ? 'OPEN' : '🔒', 0, -12);
+      ctx.font = '8px monospace';
+      ctx.fillStyle = 'rgba(255,255,255,.6)';
+      ctx.fillText(this.hasKey ? '走进箱子开箱' : '需要钥匙', 0, -34);
+    }
+    ctx.restore();
+  }
+
+  drawPlayer() {
+    const ctx = this.ctx;
+    const p = this.player;
+
+    // 冲刺残影
+    ctx.save();
+    for (const t of this.trail) {
+      ctx.globalAlpha = Math.max(0, t.life / 0.22) * 0.4;
+      ctx.fillStyle = '#7ef9ff';
+      rr(ctx, t.x - 7, t.y - 14, 14, 28, 6);
       ctx.fill();
     }
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
 
+    p.draw(ctx, this.time);
+
+    // 挥砍弧光
+    if (p.slash > 0) {
+      const a = Math.min(1, p.slash);
+      const cx = p.x + p.facing * 6;
+      const cy = p.y;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.scale(p.facing, 1);
+      ctx.globalAlpha = a * 0.85;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 4.5;
+      ctx.beginPath();
+      ctx.arc(0, 0, 30, -0.85 + (1 - a) * 0.9, 0.85 + (1 - a) * 0.3);
+      ctx.stroke();
+      ctx.globalAlpha = a * 0.4;
+      ctx.strokeStyle = '#00e5ff';
+      ctx.lineWidth = 9;
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  drawFx() {
+    const ctx = this.ctx;
+    for (const q of this.particles) {
+      const a = Math.max(0, q.life / q.max);
+      ctx.globalAlpha = a;
+      ctx.fillStyle = q.color;
+      const s = q.size * (0.5 + a * 0.5);
+      ctx.fillRect(q.x - s / 2, q.y - s / 2, s, s);
+    }
+    ctx.globalAlpha = 1;
     ctx.textAlign = 'center';
-    ctx.font = '700 14px "JetBrains Mono", Consolas, monospace';
+    ctx.font = 'bold 12px ui-monospace, SFMono-Regular, Menlo, monospace';
     for (const f of this.floats) {
-      ctx.globalAlpha = Math.min(1, f.life);
+      const a = Math.max(0, f.life / f.max);
+      ctx.globalAlpha = a;
+      ctx.fillStyle = 'rgba(0,0,0,.55)';
+      ctx.fillText(f.text, f.x + 1, f.y + 1);
       ctx.fillStyle = f.color;
       ctx.fillText(f.text, f.x, f.y);
     }
     ctx.globalAlpha = 1;
-    ctx.restore();
-
-    this._drawMinimap(ctx, w, h, th);
   }
 
-  get theme() { return this.map?.theme || { accent: '#00e5ff' }; }
-
-  _drawPlayer(ctx) {
+  /** 屏幕边缘的目标指示（钥匙 / 宝箱），避免在大关卡里迷路 */
+  drawGuide() {
+    const ctx = this.ctx;
     const p = this.player;
-    const inv = p.invuln > 0 && Math.floor(this.time * 22) % 2 === 0;
-
-    // 挥砍弧光
-    if (p.slash > 0) {
-      const s = p.slash;
-      const half = (p.stats.atkArc * DEG) / 2;
-      const center = -half + half * 2 * (1 - s);
-      ctx.save();
-      ctx.translate(p.x, p.y);
-      ctx.rotate(p.aim);
-      const grad = ctx.createRadialGradient(0, 0, p.stats.atkRange * 0.35, 0, 0, p.stats.atkRange);
-      grad.addColorStop(0, 'rgba(126, 249, 255, 0)');
-      grad.addColorStop(0.4, `rgba(126, 249, 255, ${0.55 * s})`);
-      grad.addColorStop(1, 'rgba(255, 64, 129, 0)');
-      ctx.strokeStyle = grad;
-      ctx.lineWidth = 10 * s + 3;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.arc(0, 0, p.stats.atkRange * 0.92, center - 0.55, center + 0.55);
-      ctx.stroke();
-      ctx.restore();
-    }
+    if (!p) return;
+    const target = this.hasKey ? this.map.chest.x : this.keyPickup.x;
+    const icon = this.hasKey ? '🎁' : '🔑';
+    const tip = this.hasKey ? '终点宝箱' : '钥匙';
+    const sx = clamp(target - this.cam.x, 26, VIEW.w - 26);
+    const off = target - this.cam.x;
+    if (off > 30 && off < VIEW.w - 30 && Math.abs((this.hasKey ? this.map.chest.groundY : this.keyPickup.y) - this.cam.y) < VIEW.h) return;
 
     ctx.save();
-    ctx.translate(p.x, p.y);
-    if (inv) ctx.globalAlpha = 0.55;
-
-    // 影子
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.beginPath();
-    ctx.ellipse(0, p.r * 0.85, p.r * 0.9, p.r * 0.4, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 身体
-    const body = ctx.createLinearGradient(0, -p.r, 0, p.r);
-    body.addColorStop(0, '#7ef9ff');
-    body.addColorStop(1, '#00b8d4');
-    ctx.fillStyle = p.hitFlash > 0 ? '#ff6b8a' : body;
-    ctx.beginPath();
-    ctx.arc(0, 0, p.r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.75)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-
-    // 朝向：剑
-    ctx.rotate(p.aim);
-    const reach = p.stats.atkRange * 0.55;
-    ctx.strokeStyle = '#e9fbff';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(p.r * 0.6, 0);
-    ctx.lineTo(reach, 0);
-    ctx.stroke();
-    ctx.fillStyle = '#7ef9ff';
-    ctx.beginPath();
-    ctx.arc(reach + 3, 0, 3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
-
-  _drawEnemy(ctx, e) {
-    const t = e.type;
-    ctx.save();
-    ctx.translate(e.x, e.y);
-
-    ctx.fillStyle = 'rgba(0,0,0,0.32)';
-    ctx.beginPath();
-    ctx.ellipse(0, e.r * 0.9, e.r * 0.9, e.r * 0.4, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    const hurt = e.flash > 0;
-    if (t.id === 'moth') {
-      ctx.fillStyle = hurt ? '#ffffff' : t.color;
-      const flap = Math.sin(this.time * 18 + e.seed) * 3;
-      ctx.beginPath();
-      ctx.ellipse(-e.r * 0.7, 0, e.r * 0.7, e.r * 0.5 + flap * 0.2, -0.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.ellipse(e.r * 0.7, 0, e.r * 0.7, e.r * 0.5 - flap * 0.2, 0.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#0b1020';
-      ctx.beginPath();
-      ctx.arc(0, 0, e.r * 0.55, 0, Math.PI * 2);
-      ctx.fill();
-    } else {
-      const grad = ctx.createRadialGradient(-e.r * 0.3, -e.r * 0.4, 1, 0, 0, e.r);
-      grad.addColorStop(0, hurt ? '#ffffff' : '#ffffff55');
-      grad.addColorStop(1, hurt ? '#ffd9e6' : t.color);
-      ctx.fillStyle = grad;
-      if (t.elite) {
-        ctx.fillRect(-e.r, -e.r, e.r * 2, e.r * 2);
-        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(-e.r, -e.r, e.r * 2, e.r * 2);
-      } else {
-        ctx.beginPath();
-        ctx.arc(0, 0, e.r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
-    // 眼睛
-    if (t.id !== 'moth') {
-      ctx.fillStyle = '#07101c';
-      const d = e.r * 0.32;
-      ctx.beginPath(); ctx.arc(-d, -d * 0.4, 2.2, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(d, -d * 0.4, 2.2, 0, Math.PI * 2); ctx.fill();
-    }
-
-    // 血条
-    if (e.hpBar > 0 && e.hp < e.maxHp) {
-      const w = e.r * 2.2;
-      ctx.globalAlpha = Math.min(1, e.hpBar);
-      ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillRect(-w / 2, -e.r - 10, w, 4);
-      ctx.fillStyle = t.elite ? '#ff4081' : '#69f0ae';
-      ctx.fillRect(-w / 2, -e.r - 10, (w * e.hp) / e.maxHp, 4);
-      ctx.globalAlpha = 1;
-    }
-    ctx.restore();
-  }
-
-  /** 终点：一道发光门柱，提示「这里就是宝箱」 */
-  _drawExit(ctx) {
-    const { x, y } = this.map.exit;
-    const th = this.map.theme;
-    ctx.save();
-    ctx.translate(x, y);
-    const pulse = 0.55 + Math.sin(this.time * 3) * 0.2;
-    const g = ctx.createLinearGradient(0, -46, 0, 10);
-    g.addColorStop(0, 'rgba(255, 209, 102, 0)');
-    g.addColorStop(1, `rgba(255, 209, 102, ${pulse * 0.5})`);
-    ctx.fillStyle = g;
-    ctx.fillRect(-17, -46, 34, 56);
-    ctx.strokeStyle = `rgba(255, 209, 102, ${pulse})`;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(-17, -46, 34, 56);
-    ctx.fillStyle = th.accent;
-    ctx.globalAlpha = 0.85;
-    ctx.fillRect(-22, 8, 44, 3);
-    ctx.restore();
-  }
-
-  _drawKey(ctx, x, y) {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(Math.sin(this.time * 2) * 0.25);
-    ctx.fillStyle = 'rgba(255, 209, 102, 0.28)';
-    ctx.beginPath(); ctx.arc(0, 0, 16, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#ffd166';
-    ctx.beginPath(); ctx.arc(-4, -3, 4.5, 0, Math.PI * 2); ctx.fill();
-    ctx.fillRect(-1, -1.4, 12, 2.8);
-    ctx.fillRect(7, 1, 2.6, 4);
-    ctx.fillRect(10.5, 1, 2.6, 4);
-    ctx.restore();
-  }
-
-  _drawChest(ctx, x, y, unlocked) {
-    ctx.save();
-    ctx.translate(x, y);
-    const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, 30);
-    glow.addColorStop(0, `rgba(255, 209, 102, ${unlocked ? 0.6 : 0.22})`);
-    glow.addColorStop(1, 'rgba(255, 209, 102, 0)');
-    ctx.fillStyle = glow;
-    ctx.beginPath(); ctx.arc(0, 0, 30, 0, Math.PI * 2); ctx.fill();
-
-    ctx.fillStyle = unlocked ? '#8a5514' : '#4a3a26';
-    ctx.fillRect(-11, -4, 22, 12);
-    ctx.fillStyle = unlocked ? '#ffd166' : '#7d6b45';
-    ctx.fillRect(-12, -10, 24, 7);
-    ctx.strokeStyle = unlocked ? '#fff3c4' : 'rgba(255,243,196,.4)';
-    ctx.lineWidth = 1.2;
-    ctx.strokeRect(-12, -10, 24, 7);
-    ctx.fillStyle = unlocked ? '#fff8e1' : '#6b5a3a';
-    ctx.fillRect(-2, -6, 4, 6);
-    if (!unlocked) {
-      ctx.fillStyle = '#ff6b8a';
-      ctx.font = '700 9px monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText('🔒', 0, -14);
-    }
-    ctx.restore();
-  }
-
-  _drawPotion(ctx, x, y) {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.fillStyle = 'rgba(105, 240, 174, 0.25)';
-    ctx.beginPath(); ctx.arc(0, 0, 14, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#69f0ae';
-    ctx.beginPath();
-    ctx.arc(0, 2, 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillRect(-1.6, -8, 3.2, 5);
-    ctx.strokeStyle = '#e8fff5';
-    ctx.lineWidth = 1.2;
-    ctx.strokeRect(-1.6, -8, 3.2, 5);
-    ctx.restore();
-  }
-
-  _drawMinimap(ctx, w, h, th) {
-    const mw = Math.min(150, w * 0.28);
-    const scale = mw / this.map.cols;
-    const mh = this.map.rows * scale;
-    const pad = 10;
-    const ox = w - mw - pad;
-    const oy = h - mh - pad;
-
-    ctx.save();
-    ctx.globalAlpha = 0.92;
-    ctx.fillStyle = 'rgba(6, 10, 20, 0.78)';
-    ctx.strokeStyle = 'rgba(0, 229, 255, 0.35)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.roundRect(ox - 4, oy - 4, mw + 8, mh + 8, 8);
-    ctx.fill();
-    ctx.stroke();
-
-    for (let ty = 0; ty < this.map.rows; ty++) {
-      for (let tx = 0; tx < this.map.cols; tx++) {
-        if (!this.map.explored[ty * this.map.cols + tx]) continue;
-        const t = this.map.grid[ty * this.map.cols + tx];
-        if (t === TILE.WALL) ctx.fillStyle = 'rgba(120, 160, 255, 0.16)';
-        else if (t === TILE.PIT) ctx.fillStyle = 'rgba(124, 77, 255, 0.30)';
-        else ctx.fillStyle = 'rgba(0, 229, 255, 0.30)';
-        ctx.fillRect(ox + tx * scale, oy + ty * scale, scale, scale);
-      }
-    }
-    // 未拾取的钥匙与终点宝箱
-    for (const it of this.pickups) {
-      if (it.taken) continue;
-      const tx = Math.floor(it.x / CONFIG.tile);
-      const ty = Math.floor(it.y / CONFIG.tile);
-      if (!this.map.explored[ty * this.map.cols + tx]) continue;
-      ctx.fillStyle = it.kind === 'chest' ? '#ffd166' : it.kind === 'key' ? '#ffe9a8' : '#69f0ae';
-      const s2 = it.kind === 'chest' ? 2 : 1;
-      ctx.fillRect(ox + tx * scale - s2, oy + ty * scale - s2, scale + s2 * 2, scale + s2 * 2);
-    }
-    for (const e of this.enemies) {
-      const tx = Math.floor(e.x / CONFIG.tile);
-      const ty = Math.floor(e.y / CONFIG.tile);
-      if (!this.map.explored[ty * this.map.cols + tx]) continue;
-      ctx.fillStyle = e.type.color;
-      ctx.fillRect(ox + tx * scale - 1, oy + ty * scale - 1, scale + 1, scale + 1);
-    }
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.arc(ox + (this.player.x / CONFIG.tile) * scale, oy + (this.player.y / CONFIG.tile) * scale, 2.4, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.globalAlpha = 0.9;
+    ctx.textAlign = 'center';
+    ctx.font = '13px system-ui, sans-serif';
+    ctx.fillText(icon, sx, 26);
+    ctx.font = '9px ui-monospace, monospace';
+    ctx.fillStyle = 'rgba(255,255,255,.78)';
+    ctx.fillText(off > VIEW.w - 30 ? `${tip} →` : off < 30 ? `← ${tip}` : `${tip} ↑`, sx, 40);
     ctx.restore();
   }
 }
