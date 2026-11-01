@@ -30,6 +30,11 @@
     <section class="g-stage" aria-label="游戏区">
       <div class="hud">
         <div class="hud-left">
+          <div class="hud-level">
+            <span class="hl-chapter" id="lc-chapter">序章 · 启程</span>
+            <span class="hl-idx">第 <b id="lc-idx">1</b> / <span id="lc-total">12</span> 关</span>
+            <span class="hl-key" id="key-chip"><i id="key-icon">🔒</i><span id="key-text">先找到钥匙</span></span>
+          </div>
           <div class="bar-row">
             <span class="bar-label">HP</span>
             <div class="bar hp"><i id="hp-fill"></i></div>
@@ -57,7 +62,7 @@
           <h2 id="ov-title">生涯地牢</h2>
           <p id="ov-desc">探索随机生成的地牢，集齐 12 个宝藏解锁全部成长节点</p>
           <button id="ov-btn" class="btn-primary" type="button">开始冒险</button>
-          <p class="ov-tip" id="ov-tip">WASD / 方向键移动 · J 或空格攻击 · Shift 冲刺</p>
+          <p class="ov-tip" id="ov-tip">WASD / 方向键移动 · J 或空格攻击 · Shift 冲刺跨坑</p>
         </div>
       </div>
 
@@ -69,7 +74,7 @@
           <button id="btn-dash" class="tbtn dash" type="button">冲刺</button>
         </div>
       </div>
-      <p class="g-hint">右上角小地图：白点=你，金色=宝藏，其他亮点=怪物</p>
+      <p class="g-hint">找到钥匙后打开最右侧的宝箱即可通关本关 · 遇到紫色深渊用 Shift 冲刺跨过去</p>
     </section>
 
     <!-- ---------------- 侧栏：生涯节点 + 图鉴 ---------------- -->
@@ -98,6 +103,27 @@
       <h2 id="lvl-title" class="lvl-title">升级！选择一项成长</h2>
       <p class="lvl-sub" id="lvl-sub">等级 2 · 击杀怪物获得经验</p>
       <div class="perk-cards" id="lvl-cards"></div>
+    </div>
+  </div>
+
+  <!-- ---------------- 宝藏节点详情（拾取时冻结展示） ---------------- -->
+  <div id="reveal-modal" class="modal" hidden>
+    <div class="modal-mask"></div>
+    <div class="modal-panel reveal-panel" role="dialog" aria-modal="true" aria-labelledby="rv-title">
+      <div class="rv-top">
+        <span class="rv-chapter" id="rv-chapter">序章 · 启程</span>
+        <span class="rv-count">节点 <b id="rv-idx">01</b> / <span id="rv-total">12</span></span>
+      </div>
+      <div class="rv-emoji" id="rv-emoji">🎓</div>
+      <div class="rv-meta">
+        <span class="rv-year" id="rv-year">2024.09</span>
+        <span class="rv-tag" id="rv-tag">教育</span>
+      </div>
+      <h2 class="rv-title" id="rv-title">节点标题</h2>
+      <p class="rv-text" id="rv-text">节点简介</p>
+      <div class="rv-progress"><i id="rv-bar"></i></div>
+      <button id="rv-go" class="btn-primary rv-go" type="button">继续 →</button>
+      <p class="rv-next" id="rv-next">进入第 2 关</p>
     </div>
   </div>
 

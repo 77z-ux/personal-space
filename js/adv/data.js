@@ -7,6 +7,10 @@
  *  - 解锁条件在这边变成：每打开一个宝藏 -> 顺序解锁下一个节点
  *  - 进度保存口径一致：localStorage 记录最佳成绩与已解锁节点
  * 新增职业数据的地方：CONFIG（数值）、MONSTERS（怪物）、PERKS（成长）
+ *
+ * 【关卡制】每关对应一个节点，共 12 关，从左到右线性推进：
+ *  跑图清怪 -> 找到钥匙 -> 打开终点宝箱 -> 冻结展示节点详情 -> 按任意键进入下一关
+ * 关卡章节名与配色集中在 LEVEL_THEMES，新增关卡只需 push 一条。
  * ============================================================
  */
 
@@ -20,10 +24,11 @@ export const CONFIG = {
   tile: 32,
   mapCols: 62,
   mapRows: 44,
+  levelRows: 18, // 关卡制：单关高度（格）
 
   player: {
     hp: 100,
-    speed: 176,
+    speed: 182,
     damage: 18,
     atkCd: 0.42,
     atkRange: 48,
@@ -31,9 +36,10 @@ export const CONFIG = {
     crit: 0.08,
     critMul: 2,
     lifesteal: 0,
-    dashSpeed: 570,
-    dashTime: 0.16,
-    dashCd: 1.3,
+    // 冲刺要能跨越 2 格宽的深渊：640 * 0.18 ≈ 115px（1 格 32px）
+    dashSpeed: 640,
+    dashTime: 0.18,
+    dashCd: 1.25,
     invuln: 0.65, // 受击后无敌时间
   },
 
@@ -41,11 +47,31 @@ export const CONFIG = {
     knockback: 165, // 怪物受击击退
     enemyTouchCd: 0.75, // 怪物接触伤害间隔
     potionHeal: 32,
+    pitDamage: 14, // 掉进深渊的惩罚
   },
 
   score: { node: 100, kill: 12, winBonus: 400 },
   xpNeed: (lv) => 20 + lv * 16,
 };
+
+/**
+ * 12 个关卡的章节名与配色。
+ * 想加关卡：push 一条即可；LESS 关卡数 = min(NODES.length, LEVEL_THEMES.length)。
+ */
+export const LEVEL_THEMES = [
+  { chapter: '序章 · 启程', wall: '#131c33', floor: '#0a1120', accent: '#00e5ff' },
+  { chapter: '第一章 · 基石', wall: '#12261f', floor: '#08150f', accent: '#69f0ae' },
+  { chapter: '第二章 · 集结', wall: '#1b1636', floor: '#0d0a1c', accent: '#7c4dff' },
+  { chapter: '第三章 · 立项', wall: '#111c3a', floor: '#080e20', accent: '#4d8bff' },
+  { chapter: '第四章 · 科研', wall: '#0f2a2e', floor: '#061418', accent: '#26e0d0' },
+  { chapter: '第五章 · 试炼', wall: '#2a2110', floor: '#150f05', accent: '#ffb74d' },
+  { chapter: '第六章 · 锋芒', wall: '#2c1226', floor: '#160a12', accent: '#ff4081' },
+  { chapter: '第七章 · 远征', wall: '#171a3d', floor: '#0a0b1e', accent: '#8c9eff' },
+  { chapter: '第八章 · 淬炼', wall: '#1d2a10', floor: '#0d1406', accent: '#aed581' },
+  { chapter: '第九章 · 荣光', wall: '#2d1216', floor: '#16080a', accent: '#ff6b6b' },
+  { chapter: '第十章 · 传承', wall: '#241338', floor: '#110820', accent: '#ce93d8' },
+  { chapter: '终章 · 轨迹', wall: '#2e2410', floor: '#171105', accent: '#ffd166' },
+];
 
 /** 怪物图鉴（三种基础 AI 行为） */
 export const MONSTERS = [

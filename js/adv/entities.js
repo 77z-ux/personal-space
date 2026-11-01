@@ -10,15 +10,19 @@
  */
 
 import { CONFIG, MONSTERS } from './data.js';
-import { circleHitsWall } from './dungeon.js';
+import { circleHitsWall, circleHitsSolid, tileAt, TILE } from './dungeon.js';
 
-/** 通用：按轴推进并在撞墙时自动贴墙滑行 */
-function moveWithCollision(e, map, dt) {
+/**
+ * 通用：按轴推进并在撞墙时自动贴墙滑行。
+ * @param blocked 自定义的「是否不可通行」判定，默认只挡墙。
+ *                玩家用默认（可以走进深渊然后掉落），怪物传 circleHitsSolid（不会跨深渊）。
+ */
+function moveWithCollision(e, map, dt, blocked = circleHitsWall) {
   const nx = e.x + e.vx * dt;
-  if (!circleHitsWall(map, nx, e.y, e.r)) e.x = nx;
+  if (!blocked(map, nx, e.y, e.r)) e.x = nx;
   else e.vx = 0;
   const ny = e.y + e.vy * dt;
-  if (!circleHitsWall(map, e.x, ny, e.r)) e.y = ny;
+  if (!blocked(map, e.x, ny, e.r)) e.y = ny;
   else e.vy = 0;
 }
 
@@ -120,6 +124,20 @@ export class Player {
     return Math.round(this.hp - before);
   }
 
+  /** 掉进深渊：扣血 + 退回上一个安全位置 + 短暂无敌 */
+  fall(safeX, safeY, dmg = CONFIG.combat.pitDamage) {
+    this.hp = Math.max(0, this.hp - dmg);
+    this.x = safeX;
+    this.y = safeY;
+    this.vx = 0;
+    this.vy = 0;
+    this.kx = 0;
+    this.ky = 0;
+    this.invuln = Math.max(this.invuln, 1.0);
+    this.hitFlash = 0.3;
+    return dmg;
+  }
+
   /** 加经验，返回本次升级的次数 */
   gainXp(n) {
     this.xp += n;
@@ -176,12 +194,13 @@ export class Enemy {
       this.vy *= 0.86;
     }
 
-    moveWithCollision(this, map, dt);
+    // 怪物不会跨深渊：深渊对它们等同于墙
+    moveWithCollision(this, map, dt, circleHitsSolid);
 
     // 击退
     this.x += this.kx * dt;
     this.y += this.ky * dt;
-    if (circleHitsWall(map, this.x, this.y, this.r)) { this.kx = 0; this.ky = 0; }
+    if (circleHitsSolid(map, this.x, this.y, this.r)) { this.kx = 0; this.ky = 0; }
     const decay = Math.pow(0.0008, dt);
     this.kx *= decay;
     this.ky *= decay;

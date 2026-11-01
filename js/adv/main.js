@@ -2,14 +2,18 @@
  * ============================================================
  * adv/main.js —— 冒险游戏装配层
  * ------------------------------------------------------------
- * 把「地图生成 + 引擎 + 音效」接到 DOM：HUD、生涯节点侧栏、怪物图鉴、
- * 浮动提示、升级三选一、结算界面、键鼠与触屏输入、进度存档。
+ * 把「关卡生成 + 引擎 + 音效」接到 DOM：HUD、关卡章节、生涯节点侧栏、
+ * 怪物图鉴、宝藏冻结展示卡片、升级三选一、结算界面、键鼠与触屏输入、存档。
  * 生涯节点的外观/解锁顺序/存档口径与贪吃蛇完全一致。
+ *
+ * 关卡流程：开始 → 第 N 关（跑图清怪、找钥匙）→ 打开终点宝箱
+ *          → 冻结并展示该关节点详情 → 按任意键 → 下一关
+ *          → 第 12 关结束后进入通关结算（完整成长轨迹回顾）
  * ============================================================
  */
 
-import { NODES, NODE_COUNT, MONSTERS, PERKS } from './data.js';
-import { AdventureGame } from './game.js';
+import { NODES, NODE_COUNT, MONSTERS, PERKS, LEVEL_THEMES } from './data.js';
+import { AdventureGame, LEVEL_COUNT } from './game.js';
 import { sfx } from './sfx.js';
 
 const BEST_KEY = 'zjj_adv_best';
@@ -25,10 +29,15 @@ const el = {
   hpFill: $('hp-fill'), hpText: $('hp-text'), xpFill: $('xp-fill'), lvText: $('lv-text'),
   score: $('score'), kills: $('kills'), timer: $('timer'),
   btnPause: $('btn-pause'),
+  lcIdx: $('lc-idx'), lcTotal: $('lc-total'), lcChapter: $('lc-chapter'),
+  keyIcon: $('key-icon'), keyText: $('key-text'), keyChip: $('key-chip'),
   nodeCount: $('unlock-count'), nodeTotal: $('unlock-total'), progress: $('progress-bar'),
   sideSub: $('side-sub'), nodeList: $('node-list'),
   bestiaryList: $('bestiary-list'), bestiaryCount: $('bestiary-count'), bestScore: $('best-score'),
   lvlModal: $('lvl-modal'), lvlCards: $('lvl-cards'), lvlSub: $('lvl-sub'),
+  revealModal: $('reveal-modal'), rvChapter: $('rv-chapter'), rvIdx: $('rv-idx'), rvTotal: $('rv-total'),
+  rvEmoji: $('rv-emoji'), rvYear: $('rv-year'), rvTag: $('rv-tag'), rvTitle: $('rv-title'),
+  rvText: $('rv-text'), rvBar: $('rv-bar'), rvNext: $('rv-next'), rvGo: $('rv-go'),
   resModal: $('res-modal'), resBadge: $('res-badge'), resTitle: $('res-title'), resDesc: $('res-desc'),
   resScore: $('res-score'), resNodes: $('res-nodes'), resKills: $('res-kills'), resTime: $('res-time'),
   resBestiary: $('res-bestiary'), resTimeline: $('res-timeline'), resTimelineTitle: $('res-timeline-title'),
@@ -46,6 +55,7 @@ let everNodes = new Set(readJSON(NODE_KEY, []));
 
 /* ---------------- 侧栏：生涯节点 ---------------- */
 el.nodeTotal.textContent = String(NODE_COUNT);
+el.lcTotal.textContent = String(LEVEL_COUNT);
 el.bestScore.textContent = String(bestScore);
 
 function renderLockedNodes() {
@@ -96,34 +106,51 @@ function meetMonster(type) {
   renderBestiary();
 }
 
-/* ---------------- 吃豆...这里是开箱浮动提示 ---------------- */
-/** 把世界坐标换算成画布百分比，在宝藏原位置弹节点提示 */
-function showNodeToast(index, wx, wy) {
+/* ---------------- 小提示（钥匙 / 药水 / 上锁） ---------------- */
+/** 在棋盘顶部中间弹出一条轻提示，不遮挡操作，1.8s 自动消失 */
+function showHint(emoji, title, text, cls = '') {
+  const node = document.createElement('div');
+  node.className = `hint-toast${cls ? ' ' + cls : ''}`;
+  node.innerHTML = `<div class="ht-card">
+      <span class="ht-emoji">${emoji}</span>
+      <span class="ht-title">${title}</span>
+      <span class="ht-text">${text}</span>
+    </div>`;
+  el.stage.appendChild(node);
+  setTimeout(() => node.remove(), 1800);
+}
+
+/* ---------------- 宝藏冻结：节点详情大卡片 ---------------- */
+let revealAt = 0;
+
+function showReveal(index) {
   const m = NODES[index];
   if (!m) return;
-  const sx = (wx - game.camera.x) * game.zoom + game.view.w / 2;
-  const sy = (wy - game.camera.y) * game.zoom + game.view.h / 2;
-  const left = Math.min(84, Math.max(16, (sx / game.view.w) * 100));
-  const topPct = (sy / game.view.h) * 100;
-  const below = topPct < 28;
+  const theme = LEVEL_THEMES[index % LEVEL_THEMES.length];
+  el.rvChapter.textContent = theme.chapter;
+  el.rvIdx.textContent = String(index + 1).padStart(2, '0');
+  el.rvTotal.textContent = String(LEVEL_COUNT);
+  el.rvEmoji.textContent = m.icon;
+  el.rvYear.textContent = m.year;
+  el.rvTag.textContent = m.tag;
+  el.rvTitle.textContent = m.title;
+  el.rvText.textContent = m.text;
+  el.rvBar.style.width = `${((index + 1) / LEVEL_COUNT) * 100}%`;
+  const last = index + 1 >= LEVEL_COUNT;
+  el.rvNext.textContent = last ? '查看完整成长轨迹' : `进入第 ${index + 2} 关`;
+  document.documentElement.style.setProperty('--lv-accent', theme.accent);
+  el.revealModal.hidden = false;
+  revealAt = performance.now();
+}
 
-  const node = document.createElement('div');
-  node.className = `node-toast${below ? ' below' : ''}`;
-  node.style.left = `${left}%`;
-  node.style.top = `${topPct}%`;
-  node.innerHTML = `<div class="nt-card">
-      <div class="nt-head">
-        <span class="nt-emoji">${m.icon}</span>
-        <span class="nt-no">节点 ${String(index + 1).padStart(2, '0')}</span>
-        <span class="nt-plus">+1</span>
-      </div>
-      <div class="nt-title">${m.title}</div>
-      <p class="nt-text">${m.text}</p>
-    </div>`;
-  const olds = el.stage.querySelectorAll('.node-toast');
-  if (olds.length >= 3) olds[0].remove();
-  el.stage.appendChild(node);
-  setTimeout(() => node.remove(), 2350);
+/** 任意键 / 任意点击：关掉卡片继续下一关 */
+function tryContinue() {
+  if (!game || game.state !== 'reveal') return false;
+  if (performance.now() - revealAt < 360) return false; // 防误触：刚开箱时正在按的键不算
+  el.revealModal.hidden = true;
+  sfx.blip({ freq: 660, dur: 0.1 });
+  game.continueAfterReveal();
+  return true;
 }
 
 /* ---------------- HUD ---------------- */
@@ -145,6 +172,11 @@ function updateHUD() {
   el.timer.textContent = fmtTime(game.timeMs);
   el.nodeCount.textContent = String(game.nodesFound);
   el.progress.style.width = `${(game.nodesFound / NODE_COUNT) * 100}%`;
+  el.lcIdx.textContent = String(game.levelIndex + 1);
+  const has = !!game.hasKey;
+  el.keyIcon.textContent = has ? '🔑' : '🔒';
+  el.keyText.textContent = has ? '钥匙已到手 · 冲向终点宝箱' : '先找到钥匙';
+  el.keyChip.classList.toggle('got', has);
 }
 setInterval(() => { if (game) updateHUD(); }, 120);
 
@@ -161,11 +193,15 @@ const hideOverlay = () => { el.overlay.hidden = true; };
 
 /* ---------------- 引擎 ---------------- */
 const game = new AdventureGame(el.canvas, {
+  onLevel({ index, theme }) {
+    document.documentElement.style.setProperty('--lv-accent', theme.accent);
+    el.lcIdx.textContent = String(index + 1);
+  },
   onNode(index, x, y) {
     unlockCard(index);
     everNodes.add(index);
     localStorage.setItem(NODE_KEY, JSON.stringify([...everNodes]));
-    showNodeToast(index, x, y);
+    showReveal(index);   // 冻结展示节点详情，等玩家按键
     sfx.pickupNode();
   },
   onKill(type) {
@@ -178,11 +214,25 @@ const game = new AdventureGame(el.canvas, {
   onHurt() {
     sfx.hurt();
   },
+  onPickup({ kind, healed }) {
+    if (kind === 'key') {
+      showHint('🔑', '获得钥匙', '终点宝箱已解锁，向右冲！', 'gold');
+      sfx.blip({ freq: 990, dur: 0.12 });
+      sfx.blip({ freq: 1320, t: 0.08, dur: 0.14 });
+    } else if (kind === 'potion') {
+      showHint('🧪', `恢复 ${healed} 点生命`, '继续前进', 'green');
+      sfx.potion();
+    } else if (kind === 'locked') {
+      showHint('🔒', '宝箱上锁', '先找到散落的钥匙', 'pink');
+      sfx.blip({ freq: 180, type: 'square', dur: 0.12 });
+    }
+  },
   onLevelUp(picks) {
     renderPerks(picks);
     sfx.levelUp();
   },
   onEnd(res) {
+    // 通关时先把最后一条节点同步进侧栏，再弹结算
     setTimeout(() => showResult(res), 420);
   },
   onStateChange(s) {
@@ -231,7 +281,7 @@ function showResult(res) {
   el.resTitle.textContent = win ? '通关：轨迹已完整' : '阵亡：轨迹中断';
   el.resDesc.textContent = win
     ? `你走完了目前为止的全部 ${NODE_COUNT} 个成长节点`
-    : `倒在地牢里，已解锁 ${res.nodes} / ${NODE_COUNT} 段经历`;
+    : `倒在第 ${res.levelIndex + 1} 关，已解锁 ${res.nodes} / ${NODE_COUNT} 段经历`;
   el.resScore.textContent = String(score);
   el.resNodes.textContent = String(res.nodes);
   el.resKills.textContent = String(res.kills);
@@ -272,7 +322,8 @@ el.resModal.addEventListener('click', (e) => { if (e.target.closest('[data-close
 function startNewRun() {
   closeResult();
   el.lvlModal.hidden = true;
-  el.stage.querySelectorAll('.node-toast').forEach((n) => n.remove());
+  el.revealModal.hidden = true;
+  el.stage.querySelectorAll('.hint-toast').forEach((n) => n.remove());
   renderLockedNodes();
   el.nodeCount.textContent = '0';
   el.progress.style.width = '0%';
@@ -282,9 +333,9 @@ function startNewRun() {
 }
 
 el.resAgain.addEventListener('click', startNewRun);
+el.rvGo.addEventListener('click', tryContinue);
 el.ovBtn.addEventListener('click', () => {
   if (game.state === 'paused') game.resume();
-  else if (game.state === 'over' || game.state === 'won') startNewRun();
   else startNewRun();
 });
 el.btnPause.addEventListener('click', () => {
@@ -310,6 +361,8 @@ function syncInput() {
 }
 
 window.addEventListener('keydown', (e) => {
+  // 宝藏展示中：任意键继续（消耗掉这次按键，不做其它动作）
+  if (tryContinue()) { e.preventDefault(); return; }
   if (e.target.matches('input, textarea')) return;
   const dir = KEY_DIR[e.key] || KEY_DIR[e.key.toLowerCase?.()];
   if (dir) {
@@ -381,7 +434,11 @@ const stopAttackHold = () => clearInterval(attackTimer);
 el.btnAttack.addEventListener('pointerdown', (e) => { e.preventDefault(); startAttackHold(); });
 ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => el.btnAttack.addEventListener(ev, stopAttackHold));
 el.btnDash.addEventListener('pointerdown', (e) => { e.preventDefault(); sfx.dash(); game.tryDash(); });
+
+// 宝藏展示中：点遮罩任意位置也能继续（手机友好）
+el.revealModal.addEventListener('pointerdown', (e) => { if (e.target.closest('.modal-mask')) tryContinue(); });
 el.stage.addEventListener('touchmove', (e) => { if (e.target.closest('.joystick, .tbtn')) return; e.preventDefault(); }, { passive: false });
+window.addEventListener('pointerdown', () => tryContinue(), { passive: true });
 
 /* ---------------- 音效开关 ---------------- */
 function syncSoundIcon() {
@@ -398,9 +455,9 @@ updateHUD();
 showOverlay({
   icon: '⚔️',
   title: '生涯地牢',
-  desc: `随机生成的地牢里藏着 ${NODE_COUNT} 个宝藏，集齐即可解锁完整成长轨迹`,
+  desc: `12 个关卡，每关藏着一段真实经历：清怪、找钥匙、打开终点宝箱`,
   btn: '开始冒险',
-  tip: 'WASD / 方向键移动 · J 或空格攻击 · Shift 冲刺',
+  tip: 'WASD / 方向键移动 · J 或空格攻击 · Shift 冲刺跨坑',
 });
 syncSoundIcon();
 

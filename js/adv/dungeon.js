@@ -105,6 +105,14 @@ export function generateDungeon(rng) {
 
 /* ---------------- 碰撞与地形查询（像素坐标） ---------------- */
 
+/**
+ * 地形类型（dungeon.js 的随机地牢与 level.js 的关卡制共用同一套编码）：
+ *  FLOOR 0 可通行地面
+ *  WALL  1 实心墙（谁都过不去）
+ *  PIT   2 深渊（玩家可进入但会掉落扣血；怪物视其为障碍，不会跨越）
+ */
+export const TILE = { FLOOR: 0, WALL: 1, PIT: 2 };
+
 export const tileAt = (map, x, y) => {
   const tx = Math.floor(x / CONFIG.tile);
   const ty = Math.floor(y / CONFIG.tile);
@@ -123,6 +131,23 @@ export function circleHitsWall(map, x, y, r) {
     [d * 0.72, d * 0.72], [-d * 0.72, d * 0.72], [d * 0.72, -d * 0.72], [-d * 0.72, -d * 0.72],
   ];
   for (const [ox, oy] of pts) if (isWall(map, x + ox, y + oy)) return true;
+  return false;
+}
+
+/** 像素坐标是否落在深渊里（中心点判定，手感更宽容） */
+export const inPit = (map, x, y) => tileAt(map, x, y) === TILE.PIT;
+
+/**
+ * 圆形 vs 「墙或深渊」。
+ * 怪物专用：怪物没有冲刺，深渊对它们等同于墙，于是它们会各自守在
+ * 被深渊切分出的区段里，不会出现整图怪物一窝蜂追到出生点的情况。
+ */
+export function circleHitsSolid(map, x, y, r) {
+  if (circleHitsWall(map, x, y, r)) return true;
+  if (tileAt(map, x, y) === TILE.PIT) return true;
+  const d = r * 0.72;
+  const pts = [[d, 0], [-d, 0], [0, d], [0, -d]];
+  for (const [ox, oy] of pts) if (tileAt(map, x + ox, y + oy) === TILE.PIT) return true;
   return false;
 }
 

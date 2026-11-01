@@ -2,19 +2,30 @@
  * ============================================================
  * adv/game.js —— 冒险游戏主引擎（Canvas 2D，零依赖）
  * ------------------------------------------------------------
- * 职责：跑图 / 输入解算 / 战斗判定 / 相机 / 粒子 / 小地图 / 结算。
+ * 职责：关卡装载 / 输入解算 / 战斗判定 / 相机 / 粒子 / 小地图 / 结算。
  * 与 DOM 完全解耦：所有 UI 事件通过 opts 回调抛给 main.js。
- * 状态机： idle(开始界面) → running → levelup(升级三选一) → paused
- *          → won(集齐 12 节点) / over(阵亡)
+ *
+ * 【关卡制】共 12 关（= 生涯节点数），每关一条从左到右的路线：
+ *   跑图清怪 → 捡到钥匙 → 打开终点宝箱 → 冻结并展示节点详情
+ *   → 按任意键继续 → 进入下一关；第 12 关结束后进入通关结算。
+ * 玩家的生命值 / 等级 / 经验 / 成长词条跨关保留。
+ *
+ * 状态机：
+ *   idle(开始界面) → running → levelup(升级三选一)
+ *                            → reveal(宝藏冻结展示节点) → running(下一关)
+ *                            → paused
+ *                            → won(第 12 关通关) / over(阵亡)
  * ============================================================
  */
 
-import { CONFIG, NODE_COUNT, PERKS } from './data.js';
-import { generateDungeon, makeRng, circleHitsWall, markExplored } from './dungeon.js';
+import { CONFIG, NODES, NODE_COUNT, PERKS } from './data.js';
+import { generateLevel, makeRng, TILE, tileAt } from './level.js';
+import { circleHitsWall, markExplored } from './dungeon.js';
 import { Player, Enemy, Pickup } from './entities.js';
 
 const noop = () => {};
 const DEG = Math.PI / 180;
+export const LEVEL_COUNT = Math.min(NODE_COUNT, CONFIG.levelCount || NODE_COUNT);
 
 /** 归一化到 (-PI, PI] 的角度差 */
 function angleDiff(a, b) {
@@ -29,16 +40,17 @@ export class AdventureGame {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.opts = opts;
-    this.onNode = opts.onNode || noop;
+    this.onNode = opts.onNode || noop;      // 打开宝藏：请 UI 冻结并展示节点
     this.onKill = opts.onKill || noop;
     this.onLevelUp = opts.onLevelUp || noop;
     this.onEnd = opts.onEnd || noop;
-    this.onHit = opts.onHit || noop;   // 命中怪物（含是否暴击）
-    this.onHurt = opts.onHurt || noop; // 玩家受伤
+    this.onHit = opts.onHit || noop;        // 命中怪物
+    this.onHurt = opts.onHurt || noop;      // 玩家受伤
     this.onStateChange = opts.onStateChange || noop;
-    this.onPickup = opts.onPickup || noop;
+    this.onPickup = opts.onPickup || noop;  // 拾取钥匙 / 药水
+    this.onLevel = opts.onLevel || noop;    // 关卡装载完成（换配色/章节名）
 
-    /** @type {'idle'|'running'|'paused'|'levelup'|'won'|'over'} */
+    /** @type {'idle'|'running'|'paused'|'levelup'|'reveal'|'won'|'over'} */
     this.state = 'idle';
     this.input = { mx: 0, my: 0 };
     this.time = 0;
@@ -59,72 +71,113 @@ export class AdventureGame {
 
   /* ------------------------------ 一局新游戏 ------------------------------ */
   newRun() {
-    const rng = makeRng(Date.now());
-    this.map = generateDungeon(rng);
-    this.rng = rng;
-
-    const spawnRoom = this.map.rooms[0];
-    this.player = new Player(
-      spawnRoom.cx * CONFIG.tile + CONFIG.tile / 2,
-      spawnRoom.cy * CONFIG.tile + CONFIG.tile / 2
-    );
-
-    const rest = this.map.rooms.slice(1);
-
-    // 宝藏：12 个（= 生涯节点数），轮流放进各房间
-    this.pickups = [];
-    for (let i = 0; i < NODE_COUNT; i++) {
-      const room = rest[i % rest.length];
-      const spot = this._freeSpot(room, rng);
-      this.pickups.push(new Pickup('chest', spot.x, spot.y, i));
-    }
-    // 药水：回血补给
-    for (let i = 0; i < 6; i++) {
-      const room = rng.pick ? rng.pick(rest) : rest[rng.int(0, rest.length - 1)];
-      const spot = this._freeSpot(room, rng);
-      this.pickups.push(new Pickup('potion', spot.x, spot.y));
-    }
-
-    // 怪物：越靠后的房间越多、越可能出现精英
-    this.enemies = [];
-    rest.forEach((room, idx) => {
-      const count = Math.min(5, 2 + Math.floor(idx / 3));
-      for (let i = 0; i < count; i++) {
-        const id = idx >= 6 && i === 0 ? 'golem' : rng() > 0.45 ? 'moth' : 'slime';
-        const spot = this._freeSpot(room, rng);
-        if (Math.hypot(spot.x - this.player.x, spot.y - this.player.y) < 120) continue;
-        this.enemies.push(new Enemy(id, spot.x, spot.y, rng));
-      }
-    });
-
-    this.nodesFound = 0;
+    this.player = new Player(0, 0); // 具体坐标由 loadLevel 给出
     this.kills = 0;
     this.timeMs = 0;
     this.bestiary = new Set();
+    this.nodesFound = 0;
     this.pendingLevels = 0;
-    this.particles = [];
-    this.floats = [];
-    this.shake = 0;
-    this.camera.x = this.player.x;
-    this.camera.y = this.player.y;
+    this.loadLevel(0);
     this._setState('idle');
   }
 
-  /** 房间里找一个不与已有物件重叠的落点 */
-  _freeSpot(room, rng) {
-    for (let i = 0; i < 24; i++) {
-      const p = this.map.randomSpotIn(room, 1);
-      const clash =
-        this.pickups?.some((k) => Math.hypot(k.x - p.x, k.y - p.y) < 34) ||
-        Math.hypot(p.x - this.player.x, p.y - this.player.y) < 90;
-      if (!clash) return p;
+  /** 装载第 i 关（保留玩家血量/等级/成长） */
+  loadLevel(i) {
+    this.levelIndex = i;
+    const rng = makeRng(Date.now() + i * 7919);
+    this.rng = rng;
+    this.map = generateLevel(i, rng);
+
+    const s = this.map.spawn;
+    const p = this.player;
+    p.x = s.x; p.y = s.y;
+    p.vx = 0; p.vy = 0; p.kx = 0; p.ky = 0;
+    p.invuln = 1.0;
+    p.atkTimer = 0;
+    p.dashTimer = 0;
+    p.dashCd = 0;
+
+    this.hasKey = false;
+    this.pickups = [];
+    this.enemies = [];
+    this._populate();
+
+    this.camera.x = s.x;
+    this.camera.y = s.y;
+    this.particles = [];
+    this.floats = [];
+    this.shake = 0;
+    this.lastSafe = { x: s.x, y: s.y };
+
+    this.onLevel({
+      index: i,
+      total: LEVEL_COUNT,
+      theme: this.map.theme,
+      node: NODES[i] || NODES[NODE_COUNT - 1],
+    });
+  }
+
+  /**
+   * 往关卡里填东西：钥匙、终点宝箱、药水、怪物。
+   * 全部按「被深渊切分出的区段」分布，保证每段都有内容、也都不会卡死。
+   */
+  _populate() {
+    const rng = this.rng;
+    const map = this.map;
+    const segs = map.segments;
+    const idx = this.levelIndex;
+    const used = [];
+    const farEnough = (p, min) => used.every((u) => Math.hypot(u.x - p.x, u.y - p.y) > min);
+
+    // ① 钥匙：放在中后段，常常需要冲刺跨过深渊才能拿到
+    const keySeg = segs[Math.min(segs.length - 1, Math.floor(segs.length * 0.5))];
+    const keySpot = map.randomFloorIn(keySeg.x0, keySeg.x1);
+    if (keySpot) {
+      this.pickups.push(new Pickup('key', keySpot.x, keySpot.y));
+      used.push(keySpot);
     }
-    return this.map.randomSpotIn(room, 1);
+
+    // ② 终点宝箱：最右侧，拿到钥匙才能开
+    this.pickups.push(new Pickup('chest', map.exit.x, map.exit.y, idx));
+    used.push({ x: map.exit.x, y: map.exit.y });
+
+    // ③ 药水：散落各段
+    const potionCount = Math.min(4, 2 + Math.floor(idx / 4));
+    for (let i = 0; i < potionCount; i++) {
+      const seg = segs[(i * 2 + 1) % segs.length];
+      for (let k = 0; k < 20; k++) {
+        const s = map.randomFloorIn(seg.x0, seg.x1);
+        if (s && farEnough(s, 60)) { this.pickups.push(new Pickup('potion', s.x, s.y)); used.push(s); break; }
+      }
+    }
+
+    // ④ 怪物：关卡越靠后，数量越多、越容易出精英
+    const perSeg = Math.min(3, 1 + Math.floor(idx / 4));
+    segs.forEach((seg, si) => {
+      const n = perSeg + (si % 2 === 0 ? 1 : 0);
+      for (let i = 0; i < n; i++) {
+        for (let k = 0; k < 16; k++) {
+          const s = map.randomFloorIn(seg.x0, seg.x1);
+          if (!s) break;
+          if (Math.hypot(s.x - this.map.spawn.x, s.y - this.map.spawn.y) < 150) continue; // 别贴脸出生点
+          if (!farEnough(s, 46)) continue;
+          const roll = rng();
+          let id;
+          if (idx >= 4 && roll > 0.9) id = 'golem';
+          else if (roll > 0.5) id = 'moth';
+          else id = 'slime';
+          this.enemies.push(new Enemy(id, s.x, s.y, rng));
+          used.push(s);
+          break;
+        }
+      }
+    });
   }
 
   /* ------------------------------ 状态控制 ------------------------------ */
   start() {
     if (this.state === 'won' || this.state === 'over') this.newRun();
+    if (this.state !== 'idle') return; // running / reveal / paused 时不重复触发
     this.lastTs = 0;
     this._setState('running');
   }
@@ -134,6 +187,17 @@ export class AdventureGame {
     if (this.state === 'running') this.pause();
     else if (this.state === 'paused') this.resume();
     else if (this.state === 'idle') this.start();
+  }
+
+  /** 宝藏展示完毕，玩家按键继续：进入下一关 or 通关 */
+  continueAfterReveal() {
+    if (this.state !== 'reveal') return;
+    if (this.levelIndex + 1 >= LEVEL_COUNT) this._end('win');
+    else {
+      this.loadLevel(this.levelIndex + 1);
+      this.lastTs = 0;
+      this._setState('running');
+    }
   }
 
   _setState(s) {
@@ -218,6 +282,7 @@ export class AdventureGame {
     this.lastTs = ts;
     if (dt > 0.05) dt = 0.05; // 卡顿保护
 
+    // reveal = 宝藏展示中：整个世界冻结（怪物不动、不掉血、不计时）
     if (this.state === 'running') {
       this.time += dt;
       this.timeMs += dt * 1000;
@@ -231,6 +296,20 @@ export class AdventureGame {
   update(dt) {
     const p = this.player;
     p.update(dt, this.input, this.map);
+
+    // —— 深渊判定：冲刺中高速掠过可跨越，否则掉落扣血退回安全点
+    if (tileAt(this.map, p.x, p.y) === TILE.PIT) {
+      if (p.dashTimer <= 0) {
+        const dmg = p.fall(this.lastSafe.x, this.lastSafe.y);
+        this._float(p.x, p.y - 26, `-${dmg} 坠落`, '#ff6b8a');
+        this._burst(p.x, p.y, '#7c4dff', 14);
+        this.shake = Math.min(14, this.shake + 11);
+        this.onHurt(dmg);
+      }
+    } else if (!circleHitsWall(this.map, p.x, p.y, p.r)) {
+      // 记录最后一个站得住的位置，坠落时退回这里
+      this.lastSafe = { x: p.x, y: p.y };
+    }
 
     // 迷雾 + 相机
     markExplored(this.map, p.x, p.y, 7);
@@ -264,6 +343,7 @@ export class AdventureGame {
       if (it.taken) continue;
       if (Math.hypot(it.x - p.x, it.y - p.y) > it.r + p.r) continue;
       if (it.kind === 'chest') this._openChest(it);
+      else if (it.kind === 'key') this._takeKey(it);
       else {
         const healed = p.heal(CONFIG.combat.potionHeal);
         it.taken = true;
@@ -276,7 +356,32 @@ export class AdventureGame {
     this.enemies = this.enemies.filter((e) => !e.dead);
 
     if (p.hp <= 0) this._end('dead');
-    else if (this.nodesFound >= NODE_COUNT) this._end('win');
+  }
+
+  _takeKey(it) {
+    it.taken = true;
+    this.hasKey = true;
+    this._burst(it.x, it.y, '#ffd166', 16);
+    this.onPickup({ kind: 'key' });
+  }
+
+  /** 终点宝箱：有钥匙则冻结展示节点，没钥匙则提示 */
+  _openChest(chest) {
+    if (!this.hasKey) {
+      const now = performance.now();
+      if (!this._lockHintAt || now - this._lockHintAt > 1600) {
+        this._lockHintAt = now;
+        this.onPickup({ kind: 'locked' });
+      }
+      return;
+    }
+    chest.taken = true;
+    const index = Math.min(this.nodesFound, NODE_COUNT - 1);
+    this.nodesFound += 1;
+    this._burst(chest.x, chest.y, '#ffd166', 26);
+    // 冻结整个世界，等 UI 展示完节点详情、玩家按键后再继续
+    this._setState('reveal');
+    this.onNode(index, chest.x, chest.y);
   }
 
   /** 怪物互相推挤，避免完全重叠成一坨 */
@@ -300,15 +405,6 @@ export class AdventureGame {
     }
   }
 
-  _openChest(chest) {
-    chest.taken = true;
-    const index = Math.min(this.nodesFound, NODE_COUNT - 1);
-    this.nodesFound += 1;
-    this._burst(chest.x, chest.y, '#ffd166', 22);
-    this.onNode(index, chest.x, chest.y);
-    if (this.nodesFound >= NODE_COUNT) this._end('win');
-  }
-
   _end(reason) {
     this._setState(reason === 'win' ? 'won' : 'over');
     this.onEnd(this.result(reason));
@@ -325,6 +421,8 @@ export class AdventureGame {
       bestiary: [...this.bestiary],
       hp: Math.round(this.player.hp),
       maxHp: Math.round(this.player.stats.maxHp),
+      levelIndex: this.levelIndex,
+      levelTotal: LEVEL_COUNT,
     };
   }
 
@@ -370,7 +468,7 @@ export class AdventureGame {
     const w = Math.max(280, rect.width);
     const h = Math.max(220, Math.min(rect.height || rect.width * 0.62, 620));
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    this.zoom = w < 520 ? 0.86 : 1; // 手机拉近看得清
+    this.zoom = w < 520 ? 1.05 : 1.25; // 关卡里视野拉近一点，看得清怪
     this.view = { w, h };
     this.dpr = dpr;
     this.canvas.width = Math.round(w * dpr);
@@ -388,6 +486,7 @@ export class AdventureGame {
     if (!this.map) return;
 
     const T = CONFIG.tile;
+    const th = this.map.theme;
     const vw = w / this.zoom;
     const vh = h / this.zoom;
     const shakeX = (Math.random() - 0.5) * this.shake;
@@ -397,39 +496,77 @@ export class AdventureGame {
     ctx.scale(this.zoom, this.zoom);
     ctx.translate(vw / 2 - this.camera.x + shakeX, vh / 2 - this.camera.y + shakeY);
 
-    // 可见范围
     const x0 = Math.max(0, Math.floor((this.camera.x - vw / 2) / T) - 1);
     const x1 = Math.min(this.map.cols - 1, Math.ceil((this.camera.x + vw / 2) / T) + 1);
     const y0 = Math.max(0, Math.floor((this.camera.y - vh / 2) / T) - 1);
     const y1 = Math.min(this.map.rows - 1, Math.ceil((this.camera.y + vh / 2) / T) + 1);
 
-    // 地面
-    ctx.fillStyle = '#0a1020';
+    // 背景底
+    ctx.fillStyle = '#05070f';
     ctx.fillRect(x0 * T, y0 * T, (x1 - x0 + 1) * T, (y1 - y0 + 1) * T);
+
     for (let ty = y0; ty <= y1; ty++) {
       for (let tx = x0; tx <= x1; tx++) {
+        const t = this.map.grid[ty * this.map.cols + tx];
         const wx = tx * T;
         const wy = ty * T;
-        if (this.map.grid[ty * this.map.cols + tx] === 1) {
-          ctx.fillStyle = '#131c33';
+        if (t === TILE.WALL) {
+          // 区分边缘墙与内部墙：只有挨着通道的墙才用主题色，
+          // 通道上方的整片墙体画成暗色，避免上半屏一片色块、突出地面轮廓
+          const aboveOpen = ty > 0 && this.map.grid[(ty - 1) * this.map.cols + tx] !== TILE.WALL;
+          const belowOpen = ty < this.map.rows - 1 && this.map.grid[(ty + 1) * this.map.cols + tx] !== TILE.WALL;
+          const leftOpen = tx > 0 && this.map.grid[ty * this.map.cols + tx - 1] !== TILE.WALL;
+          const rightOpen = tx < this.map.cols - 1 && this.map.grid[ty * this.map.cols + tx + 1] !== TILE.WALL;
+          const edge = aboveOpen || belowOpen || leftOpen || rightOpen;
+          ctx.fillStyle = edge ? th.wall : '#060a14';
           ctx.fillRect(wx, wy, T, T);
-          ctx.fillStyle = 'rgba(0, 229, 255, 0.10)';
-          ctx.fillRect(wx, wy, T, 3);
+          if (aboveOpen) {
+            ctx.fillStyle = th.accent;
+            ctx.globalAlpha = 0.55;
+            ctx.fillRect(wx, wy, T, 3);
+            ctx.globalAlpha = 1;
+          }
+        } else if (t === TILE.PIT) {
+          // 深渊：近乎全黑 + 四周与通道相接处画紫色霓虹边，提示「要冲刺跨越」
+          ctx.fillStyle = '#02040a';
+          ctx.fillRect(wx, wy, T, T);
+          const G = this.map.grid;
+          const u = ty > 0 ? G[(ty - 1) * this.map.cols + tx] : TILE.WALL;
+          const d = ty < this.map.rows - 1 ? G[(ty + 1) * this.map.cols + tx] : TILE.WALL;
+          const l = tx > 0 ? G[ty * this.map.cols + tx - 1] : TILE.WALL;
+          const r = tx < this.map.cols - 1 ? G[ty * this.map.cols + tx + 1] : TILE.WALL;
+          ctx.strokeStyle = 'rgba(124, 77, 255, 0.5)';
+          ctx.lineWidth = 2;
+          if (u !== TILE.PIT) { ctx.beginPath(); ctx.moveTo(wx, wy + 1); ctx.lineTo(wx + T, wy + 1); ctx.stroke(); }
+          if (d !== TILE.PIT) { ctx.beginPath(); ctx.moveTo(wx, wy + T - 1); ctx.lineTo(wx + T, wy + T - 1); ctx.stroke(); }
+          if (l !== TILE.PIT) { ctx.beginPath(); ctx.moveTo(wx + 1, wy); ctx.lineTo(wx + 1, wy + T); ctx.stroke(); }
+          if (r !== TILE.PIT) { ctx.beginPath(); ctx.moveTo(wx + T - 1, wy); ctx.lineTo(wx + T - 1, wy + T); ctx.stroke(); }
         } else {
-          ctx.fillStyle = (tx + ty) % 2 ? '#0c1426' : '#0a1120';
+          ctx.fillStyle = (tx + ty) % 2 ? th.floor : '#0b1220';
           ctx.fillRect(wx, wy, T, T);
-          ctx.strokeStyle = 'rgba(90, 130, 220, 0.055)';
+          ctx.strokeStyle = 'rgba(110, 150, 240, 0.11)';
           ctx.lineWidth = 1;
           ctx.strokeRect(wx + 0.5, wy + 0.5, T, T);
+          // 地面纹理：用小亮点暗示电路/星尘，让可行走区更有质感（稳定伪随机，不闪烁）
+          if ((tx * 7 + ty * 13) % 17 === 0) {
+            ctx.fillStyle = th.accent;
+            ctx.globalAlpha = 0.22;
+            ctx.fillRect(wx + T * 0.5 - 1, wy + T * 0.5 - 1, 2, 2);
+            ctx.globalAlpha = 1;
+          }
         }
       }
     }
+
+    // 终点光柱（宝箱所在地）
+    this._drawExit(ctx);
 
     // 拾取物
     for (const it of this.pickups) {
       if (it.taken) continue;
       const bob = Math.sin(this.time * 2.6 + it.bob) * 3;
-      if (it.kind === 'chest') this._drawChest(ctx, it.x, it.y + bob);
+      if (it.kind === 'chest') this._drawChest(ctx, it.x, it.y + bob, this.hasKey);
+      else if (it.kind === 'key') this._drawKey(ctx, it.x, it.y + bob);
       else this._drawPotion(ctx, it.x, it.y + bob);
     }
 
@@ -461,8 +598,10 @@ export class AdventureGame {
     ctx.globalAlpha = 1;
     ctx.restore();
 
-    this._drawMinimap(ctx, w, h);
+    this._drawMinimap(ctx, w, h, th);
   }
+
+  get theme() { return this.map?.theme || { accent: '#00e5ff' }; }
 
   _drawPlayer(ctx) {
     const p = this.player;
@@ -479,7 +618,7 @@ export class AdventureGame {
       const grad = ctx.createRadialGradient(0, 0, p.stats.atkRange * 0.35, 0, 0, p.stats.atkRange);
       grad.addColorStop(0, 'rgba(126, 249, 255, 0)');
       grad.addColorStop(0.4, `rgba(126, 249, 255, ${0.55 * s})`);
-      grad.addColorStop(1, `rgba(255, 64, 129, 0)`);
+      grad.addColorStop(1, 'rgba(255, 64, 129, 0)');
       ctx.strokeStyle = grad;
       ctx.lineWidth = 10 * s + 3;
       ctx.lineCap = 'round';
@@ -589,24 +728,65 @@ export class AdventureGame {
     ctx.restore();
   }
 
-  _drawChest(ctx, x, y) {
+  /** 终点：一道发光门柱，提示「这里就是宝箱」 */
+  _drawExit(ctx) {
+    const { x, y } = this.map.exit;
+    const th = this.map.theme;
     ctx.save();
     ctx.translate(x, y);
-    const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, 26);
-    glow.addColorStop(0, 'rgba(255, 209, 102, 0.55)');
+    const pulse = 0.55 + Math.sin(this.time * 3) * 0.2;
+    const g = ctx.createLinearGradient(0, -46, 0, 10);
+    g.addColorStop(0, 'rgba(255, 209, 102, 0)');
+    g.addColorStop(1, `rgba(255, 209, 102, ${pulse * 0.5})`);
+    ctx.fillStyle = g;
+    ctx.fillRect(-17, -46, 34, 56);
+    ctx.strokeStyle = `rgba(255, 209, 102, ${pulse})`;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(-17, -46, 34, 56);
+    ctx.fillStyle = th.accent;
+    ctx.globalAlpha = 0.85;
+    ctx.fillRect(-22, 8, 44, 3);
+    ctx.restore();
+  }
+
+  _drawKey(ctx, x, y) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.sin(this.time * 2) * 0.25);
+    ctx.fillStyle = 'rgba(255, 209, 102, 0.28)';
+    ctx.beginPath(); ctx.arc(0, 0, 16, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ffd166';
+    ctx.beginPath(); ctx.arc(-4, -3, 4.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillRect(-1, -1.4, 12, 2.8);
+    ctx.fillRect(7, 1, 2.6, 4);
+    ctx.fillRect(10.5, 1, 2.6, 4);
+    ctx.restore();
+  }
+
+  _drawChest(ctx, x, y, unlocked) {
+    ctx.save();
+    ctx.translate(x, y);
+    const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, 30);
+    glow.addColorStop(0, `rgba(255, 209, 102, ${unlocked ? 0.6 : 0.22})`);
     glow.addColorStop(1, 'rgba(255, 209, 102, 0)');
     ctx.fillStyle = glow;
-    ctx.beginPath(); ctx.arc(0, 0, 26, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(0, 0, 30, 0, Math.PI * 2); ctx.fill();
 
-    ctx.fillStyle = '#7a4a12';
+    ctx.fillStyle = unlocked ? '#8a5514' : '#4a3a26';
     ctx.fillRect(-11, -4, 22, 12);
-    ctx.fillStyle = '#ffd166';
+    ctx.fillStyle = unlocked ? '#ffd166' : '#7d6b45';
     ctx.fillRect(-12, -10, 24, 7);
-    ctx.strokeStyle = '#fff3c4';
+    ctx.strokeStyle = unlocked ? '#fff3c4' : 'rgba(255,243,196,.4)';
     ctx.lineWidth = 1.2;
     ctx.strokeRect(-12, -10, 24, 7);
-    ctx.fillStyle = '#fff8e1';
+    ctx.fillStyle = unlocked ? '#fff8e1' : '#6b5a3a';
     ctx.fillRect(-2, -6, 4, 6);
+    if (!unlocked) {
+      ctx.fillStyle = '#ff6b8a';
+      ctx.font = '700 9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('🔒', 0, -14);
+    }
     ctx.restore();
   }
 
@@ -626,7 +806,7 @@ export class AdventureGame {
     ctx.restore();
   }
 
-  _drawMinimap(ctx, w, h) {
+  _drawMinimap(ctx, w, h, th) {
     const mw = Math.min(150, w * 0.28);
     const scale = mw / this.map.cols;
     const mh = this.map.rows * scale;
@@ -647,19 +827,22 @@ export class AdventureGame {
     for (let ty = 0; ty < this.map.rows; ty++) {
       for (let tx = 0; tx < this.map.cols; tx++) {
         if (!this.map.explored[ty * this.map.cols + tx]) continue;
-        const solid = this.map.grid[ty * this.map.cols + tx] === 1;
-        ctx.fillStyle = solid ? 'rgba(120, 160, 255, 0.16)' : 'rgba(0, 229, 255, 0.30)';
+        const t = this.map.grid[ty * this.map.cols + tx];
+        if (t === TILE.WALL) ctx.fillStyle = 'rgba(120, 160, 255, 0.16)';
+        else if (t === TILE.PIT) ctx.fillStyle = 'rgba(124, 77, 255, 0.30)';
+        else ctx.fillStyle = 'rgba(0, 229, 255, 0.30)';
         ctx.fillRect(ox + tx * scale, oy + ty * scale, scale, scale);
       }
     }
-    // 未拾取的宝藏（仅显示已探索区域）
+    // 未拾取的钥匙与终点宝箱
     for (const it of this.pickups) {
-      if (it.taken || it.kind !== 'chest') continue;
+      if (it.taken) continue;
       const tx = Math.floor(it.x / CONFIG.tile);
       const ty = Math.floor(it.y / CONFIG.tile);
       if (!this.map.explored[ty * this.map.cols + tx]) continue;
-      ctx.fillStyle = '#ffd166';
-      ctx.fillRect(ox + tx * scale - 1, oy + ty * scale - 1, scale + 2, scale + 2);
+      ctx.fillStyle = it.kind === 'chest' ? '#ffd166' : it.kind === 'key' ? '#ffe9a8' : '#69f0ae';
+      const s2 = it.kind === 'chest' ? 2 : 1;
+      ctx.fillRect(ox + tx * scale - s2, oy + ty * scale - s2, scale + s2 * 2, scale + s2 * 2);
     }
     for (const e of this.enemies) {
       const tx = Math.floor(e.x / CONFIG.tile);
