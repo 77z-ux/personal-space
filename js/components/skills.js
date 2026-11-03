@@ -13,7 +13,7 @@ export function renderSkills() {
     </div>
     <div class="skills-grid">
       ${SKILLS.map((g, i) => `
-        <div class="skill-group reveal" data-delay="${i * 0.08}">
+        <div class="skill-group reveal" data-anim="scale" data-delay="${i * 0.08}">
           <div class="skill-group-head">
             <span class="skill-icon">${g.icon}</span>
             <span>${g.group}</span>

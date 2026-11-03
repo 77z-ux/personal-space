@@ -14,7 +14,7 @@ export function renderTimeline() {
 
     <div class="timeline">
       ${TIMELINE.map((t, i) => `
-        <div class="tl-item tl-${t.type} reveal" data-delay="${i * 0.08}">
+        <div class="tl-item tl-${t.type} reveal" data-anim="slide" data-delay="${i * 0.08}">
           <p class="tl-date">${t.date} · ${t.org}</p>
           <div class="tl-card">
             <h3 class="tl-title">${t.title}</h3>
@@ -33,7 +33,7 @@ export function renderTimeline() {
     </div>
     <div class="honors-grid">
       ${HONORS.map((h, i) => `
-        <div class="honor-card reveal" data-delay="${i * 0.06}">
+        <div class="honor-card reveal" data-anim="scale" data-delay="${i * 0.06}">
           <span class="honor-level">${h.level}</span>
           <p class="honor-name">${h.name}</p>
           ${h.note ? `<p class="honor-note">${h.note}</p>` : ''}

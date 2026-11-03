@@ -26,6 +26,8 @@ import { renderGallery } from './components/gallery.js';
 import { renderContact, renderFooter } from './components/contact.js';
 import { initQrModal } from './components/qrmodal.js';
 import { mountViewCounter } from './components/views.js';
+import { initRecruiterMode } from './components/recruiter.js';
+import { initMotion } from './core/motion.js';
 
 function init() {
   // 1. 渲染各内容模块（顺序 = 页面区块顺序）
@@ -45,12 +47,14 @@ function init() {
   observeReveals();
   initRouter();
 
-  // 3. 二维码弹窗 + 静音开关
+  // 3. 二维码弹窗 + 静音开关 + 求职模式（依赖导航里渲染出的切换按钮）
   initQrModal();
   initSoundToggle();
+  initRecruiterMode();
 
-  // 4. 全局音效绑定（hover/click）
+  // 4. 全局音效绑定（hover/click）+ 细节动效（光标柔光 / 磁吸按钮）
   bindSfx();
+  initMotion();
 
   // 5. 初始 hash 定位（例如直接访问 /#/projects）
   //    用 instant 并延时一帧，覆盖浏览器的滚动位置恢复行为

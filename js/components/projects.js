@@ -31,11 +31,11 @@ export function renderProjects() {
 
 function projectCard(p, i) {
   return `
-    <article class="project-card reveal" data-delay="${(i % 2) * 0.1}" data-tilt>
+    <article class="project-card reveal" data-anim="scale" data-delay="${(i % 2) * 0.1}" data-tilt>
       <div class="project-media ${p.orientation === 'portrait' ? 'portrait' : ''}"
            data-video="${p.video}" data-title="${p.title}" role="button" tabindex="0"
            aria-label="播放 ${p.title} 演示视频">
-        <img src="${p.poster}" alt="${p.title} 视频封面" loading="lazy" />
+        <img src="${p.poster}" alt="${p.title} 视频封面" loading="lazy" width="${p.posterW || 1280}" height="${p.posterH || 720}" decoding="async" />
         ${p.award ? `<span class="project-award">🏆 ${p.award}</span>` : ''}
         <span class="play-badge"><span class="play-circle">▶</span></span>
       </div>

@@ -30,6 +30,86 @@ export const SITE = {
   },
 };
 
+/**
+ * 求职模式（Recruiter Mode）—— 给 HR 的一屏速览
+ * ------------------------------------------------------------
+ * 触发方式（三者任一）：
+ *   1. 点导航右侧「招聘速览」按钮
+ *   2. 链接直达：index.html?mode=recruiter
+ *   3. 地址栏：index.html#/recruiter
+ * 进入后会记住选择（localStorage），点「退出速览」或加 ?mode=full 可恢复完整页面。
+ * 内容全部取自下方简历事实，未新增任何未经验证的信息。
+ */
+export const RECRUITER = {
+  enabled: true,
+
+  /** 顶部状态徽章：不给毕业年份等未确认信息下定论 */
+  status: {
+    label: '求职中',
+    sub: '机器人 / 嵌入式 / ROS 2 方向 · 可实习',
+  },
+
+  /** 一屏能读完的自我定位（由下方履历事实压缩而来） */
+  pitch:
+    '机器人工程本科在读，GPA 3.66（专业前 5%）。做过 STM32 实时底盘与 ROS 2 定位导航的完整闭环，' +
+    '也带队拿过国家级奖项 2 项、省级奖项 5 项。习惯把「能跑」做到「稳定跑」。',
+
+  /** 关键数据条（数值与 PROFILE.stats 一致） */
+  facts: [
+    { value: '3.66', label: 'GPA / 4.0' },
+    { value: '前 5%', label: '专业排名' },
+    { value: '2 项', label: '国家级奖项（带队）' },
+    { value: '5 项', label: '省级奖项（带队）' },
+  ],
+
+  /** 3 段最相关的经历：每条只留「做了什么 + 结果」 */
+  experiences: [
+    {
+      period: '2026-06 ～ 2026-09',
+      kicker: '实习',
+      title: '机器人底盘开发 · 广东华南虎科技',
+      points: [
+        '负责 stemm 家庭陪伴机器人底盘上下位机与 ROS 2 定位导航开发',
+        '打通「指令下发 — 底盘执行 — 状态反馈 — 定位更新」闭环，支持自主探索、目标位姿导航、地图保存与返航',
+      ],
+      tags: ['ROS 2 Humble', 'EKF', 'Cartographer', 'Nav2'],
+    },
+    {
+      period: '2025-09 ～ 2026-06',
+      kicker: '项目',
+      title: '智慧药房自主配送机器人 · 全栈开发',
+      points: [
+        '上位机 ROS2 导航决策 + 下位机 STM32 实时底盘控制，自定义串口协议回传任务与里程状态',
+        '激光 SLAM 建图 + AMCL 定位，完成任务状态机统筹「取样-识别-配送-回传」全流程',
+      ],
+      tags: ['RDK X3', 'Nav2', 'SLAM', '二维码识别'],
+    },
+    {
+      period: '2025-07 ～ 至今',
+      kicker: '校园',
+      title: '机械创新工作室 · 负责人',
+      points: [
+        '统筹工科赛、工创赛、电赛等赛事与大创项目的选题评估、可行性分析与研发计划',
+        '一年带领嵌入式开发组获国家级奖项 2 项、省级奖项 5 项，含嵌入式芯片系统设计大赛企业杯（Top 2）',
+      ],
+      tags: ['团队管理', '竞赛统筹', '嵌入式开发'],
+    },
+  ],
+
+  /** 技术栈速览：从 SKILLS 里挑最相关的关键词（分组标题沿用原分组） */
+  stack: [
+    { group: '嵌入式', items: ['C/C++', 'STM32F407', 'FreeRTOS', '电机闭环控制'] },
+    { group: '机器人', items: ['ROS 2 Humble', 'Nav2', 'Cartographer', 'EKF 融合'] },
+    { group: '平台', items: ['Linux', 'Python', 'Git', 'CMake / colcon'] },
+  ],
+
+  /** 简历文件：留空则按钮变为「保存为 PDF」（浏览器打印，无需上传文件） */
+  resumeFile: '',
+
+  /** 速览页脚提示 */
+  footerNote: '按 Esc 或点「退出速览」回到完整页面 · 链接加 ?mode=recruiter 可直接分享给 HR',
+};
+
 /** 个人基础信息（简历事实） */
 export const PROFILE = {
   name: '赵佳杰',
@@ -157,6 +237,8 @@ export const PROJECTS = [
     tech: ['RDK X3', 'ROS 2 Humble', 'STM32', 'FreeRTOS', 'Nav2', 'SLAM', '二维码识别'],
     video: 'assets/videos/pharmacy.mp4',
     poster: 'assets/posters/pharmacy.jpg',
+    posterW: 1920,
+    posterH: 1080,
     orientation: 'landscape',
   },
   {
@@ -174,6 +256,8 @@ export const PROJECTS = [
     tech: ['STM32F407VET6', 'MaxiCam2', '麦克纳姆轮全向底盘', '转盘式物料收取机构', '多机通信'],
     video: 'assets/videos/robocup.mp4',
     poster: 'assets/posters/robocup.jpg',
+    posterW: 1280,
+    posterH: 720,
     orientation: 'landscape',
     repo: 'https://gitee.com/JonyJ_17/rc_ws.git',
   },
@@ -193,6 +277,8 @@ export const PROJECTS = [
     tech: ['STM32F407VET6', 'RK3588', 'Modbus-RTU', 'WebRTC', 'PID / 陀螺仪前馈'],
     video: 'assets/videos/balance-ball.mp4',
     poster: 'assets/posters/balance-ball.jpg',
+    posterW: 720,
+    posterH: 750,
     orientation: 'portrait',
   },
   {
@@ -211,6 +297,8 @@ export const PROJECTS = [
     tech: ['C/C++', 'Python', 'Linux', 'ROS 2 Humble', 'UART', 'TF2', 'EKF', 'Cartographer', 'AMCL', 'Nav2'],
     video: 'assets/videos/stemm.mp4',
     poster: 'assets/posters/stemm.jpg',
+    posterW: 1280,
+    posterH: 720,
     orientation: 'landscape',
     repo: 'https://github.com/stemm-agent',
   },
@@ -222,6 +310,8 @@ export const GALLERY = [
     title: '寻找声源 · 导航避障',
     video: 'assets/videos/sound-nav.mp4',
     poster: 'assets/posters/sound-nav.jpg',
+    posterW: 720,
+    posterH: 1280,
     orientation: 'portrait',
     hint: '声源定位 + 自主导航避障演示',
   },
@@ -229,6 +319,8 @@ export const GALLERY = [
     title: '小车自动回充',
     video: 'assets/videos/auto-charge.mp4',
     poster: 'assets/posters/auto-charge.jpg',
+    posterW: 720,
+    posterH: 1280,
     orientation: 'portrait',
     hint: '自动回充对接演示',
   },

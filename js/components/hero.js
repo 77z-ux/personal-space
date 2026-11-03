@@ -41,7 +41,7 @@ export function renderHero() {
 
       <div class="hero-stats">
         ${PROFILE.stats.map((s, i) => `
-          <div class="stat-card reveal" data-delay="${0.1 + i * 0.08}">
+          <div class="stat-card reveal" data-anim="scale" data-delay="${0.1 + i * 0.08}">
             <div class="stat-value grad-text">
               <span class="mono">${s.prefix || ''}</span><span class="stat-num" data-target="${s.value}" data-decimals="${s.decimals}">0</span><span class="mono">${s.suffix}</span>
             </div>

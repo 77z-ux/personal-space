@@ -13,10 +13,10 @@ export function renderGallery() {
     </div>
     <div class="gallery-grid">
       ${GALLERY.map((g, i) => `
-        <div class="gallery-item reveal" data-delay="${i * 0.1}"
+        <div class="gallery-item reveal" data-anim="scale" data-delay="${i * 0.1}"
              data-video="${g.video}" data-poster="${g.poster}" data-title="${g.title}"
              role="button" tabindex="0" aria-label="播放 ${g.title}">
-          <img src="${g.poster}" alt="${g.title} 封面" loading="lazy" />
+          <img src="${g.poster}" alt="${g.title} 封面" loading="lazy" width="${g.posterW || 720}" height="${g.posterH || 1280}" decoding="async" />
           <div class="gallery-caption">
             ${g.title}
             <small>${g.hint}</small>

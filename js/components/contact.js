@@ -13,7 +13,7 @@ export function renderContact() {
     </div>
     <div class="contact-grid">
       ${CONTACT.items.map((c, i) => `
-        <a class="contact-card reveal" data-delay="${i * 0.08}"
+        <a class="contact-card reveal" data-anim="scale" data-delay="${i * 0.08}"
            ${c.href ? `href="${c.href}"` : ''} ${c.href && c.href.startsWith('http') ? 'target="_blank" rel="noopener noreferrer"' : ''}>
           <span class="contact-icon">${c.icon}</span>
           <span>

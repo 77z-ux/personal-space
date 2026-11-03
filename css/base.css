@@ -63,6 +63,43 @@ a { color: var(--neon-cyan); text-decoration: none; }
 button { font-family: inherit; cursor: pointer; }
 img, video { max-width: 100%; display: block; }
 
+/* ---------- 键盘可达性 ---------- */
+/* 跳过导航：Tab 第一下出现，直达主要内容 */
+.skip-link {
+  position: fixed;
+  top: -80px;
+  left: 16px;
+  z-index: 200;
+  padding: 10px 18px;
+  border-radius: 0 0 12px 12px;
+  background: var(--bg-1);
+  border: 1px solid var(--neon-cyan);
+  color: var(--neon-cyan);
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.6), 0 0 18px rgba(0, 229, 255, 0.35);
+  transition: top 0.22s var(--ease-out);
+}
+.skip-link:focus { top: 0; }
+
+/* 统一焦点轮廓：只在键盘操作时出现，不干扰鼠标用户 */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 3px;
+  border-radius: 8px;
+}
+.btn:focus-visible,
+.nav-cta:focus-visible,
+.dock-btn:focus-visible {
+  outline-offset: 4px;
+  box-shadow: 0 0 0 4px rgba(0, 229, 255, 0.18), 0 0 22px rgba(0, 229, 255, 0.35);
+}
+/* 深色底上默认轮廓色太暗，统一提亮 */
+:focus:not(:focus-visible) { outline: none; }
+
 /* ---------- 背景层 ---------- */
 #fx-bg {
   position: fixed;
@@ -143,23 +180,51 @@ img, video { max-width: 100%; display: block; }
   border: 1px solid transparent;
   font-size: 15px;
   font-weight: 600;
-  transition: transform 0.25s var(--ease-out), box-shadow 0.25s, background 0.25s;
+  /* 磁吸：--mag-x/--mag-y 由 core/motion.js 根据指针位置写入 */
+  --mag-x: 0px;
+  --mag-y: 0px;
+  transform: translate3d(var(--mag-x), var(--mag-y), 0);
+  transition: transform 0.18s var(--ease-out), box-shadow 0.25s, background 0.25s;
 }
-.btn:active { transform: scale(0.96); }
 .btn-primary {
   background: var(--grad-neon);
   color: #041018;
   box-shadow: 0 6px 24px rgba(0, 229, 255, 0.35);
 }
-.btn-primary:hover { transform: translateY(-2px); box-shadow: 0 10px 32px rgba(124, 77, 255, 0.55); }
+.btn-primary:hover {
+  transform: translate3d(var(--mag-x), calc(var(--mag-y) - 2px), 0);
+  box-shadow: 0 10px 32px rgba(124, 77, 255, 0.55);
+}
 .btn-ghost {
   background: transparent;
   color: var(--neon-cyan);
   border-color: var(--line);
 }
 .btn-ghost:hover { background: rgba(0, 229, 255, 0.08); box-shadow: 0 0 18px rgba(0, 229, 255, 0.25); }
+/* :active 放在最后，保证按下时优先于 hover 的上浮 */
+.btn:active { transform: translate3d(var(--mag-x), var(--mag-y), 0) scale(0.96); }
 
-/* ---------- 滚动入场动画（reveal.js 控制 .in 类） ---------- */
+/* ---------- 光标柔光（core/motion.js 注入 .cursor-glow） ---------- */
+.cursor-glow {
+  position: fixed;
+  top: 0; left: 0;
+  width: 520px; height: 520px;
+  margin: -260px 0 0 -260px;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 1;
+  background: radial-gradient(circle, rgba(0, 229, 255, 0.10), rgba(124, 77, 255, 0.06) 42%, transparent 68%);
+  opacity: 0;
+  transition: opacity 0.6s ease;
+  will-change: transform;
+}
+.cursor-glow.on { opacity: 1; }
+
+/* ---------- 滚动入场动画（reveal.js 控制 .in 类） ----------
+   三种变体，按内容类型分配，避免 6 个区块节奏完全同构：
+     .reveal                 上浮（默认，用于标题/首屏）
+     .reveal[data-anim=scale] 缩放浮现（用于卡片网格）
+     .reveal[data-anim=slide] 侧滑（用于时间线条目）                */
 .reveal {
   opacity: 0;
   transform: translateY(36px);
@@ -167,9 +232,12 @@ img, video { max-width: 100%; display: block; }
   transition-delay: var(--reveal-delay, 0s);
   will-change: opacity, transform;
 }
+.reveal[data-anim="scale"] { transform: scale(0.94) translateY(16px); }
+.reveal[data-anim="slide"] { transform: translateX(-30px); }
 .reveal.in { opacity: 1; transform: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .reveal { transition: none; opacity: 1; transform: none; }
   html { scroll-behavior: auto; }
+  .cursor-glow { display: none; }
 }

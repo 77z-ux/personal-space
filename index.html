@@ -5,18 +5,58 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="赵佳杰 · 机器人系统开发（嵌入式开发）个人空间 —— ROS2 / STM32 / 运动控制 / 自主导航" />
   <title>赵佳杰 · 机器人系统开发</title>
+  <meta name="theme-color" content="#05070f" />
+
+  <!-- 分享卡：二维码 / 微信 / QQ 转发时的缩略图与标题（分享卡图由本页首屏生成，1200×630） -->
+  <meta property="og:type" content="profile" />
+  <meta property="og:site_name" content="赵佳杰 · 机器人系统开发" />
+  <meta property="og:title" content="赵佳杰 · 机器人系统开发（嵌入式 / ROS 2）" />
+  <meta property="og:description" content="GPA 3.66（专业前 5%）· 带队获国家级奖项 2 项、省级 5 项 · STM32 底盘 + ROS 2 定位导航完整闭环" />
+  <meta property="og:url" content="https://77z-ux.github.io/personal-space/" />
+  <meta property="og:image" content="https://77z-ux.github.io/personal-space/assets/img/share-card.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="赵佳杰个人空间首屏：机器人系统开发，GPA 3.66，专业前 5%" />
+  <meta property="og:locale" content="zh_CN" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="赵佳杰 · 机器人系统开发（嵌入式 / ROS 2）" />
+  <meta name="twitter:description" content="机器人工程本科在读 · GPA 3.66（专业前 5%）· 国家级奖项 2 项、省级 5 项" />
+  <meta name="twitter:image" content="https://77z-ux.github.io/personal-space/assets/img/share-card.png" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Person",
+    "name": "赵佳杰",
+    "jobTitle": "机器人系统开发（嵌入式开发）",
+    "email": "mailto:JonyJ17@163.com",
+    "telephone": "19830189385",
+    "url": "https://77z-ux.github.io/personal-space/",
+    "image": "https://77z-ux.github.io/personal-space/assets/img/share-card.png",
+    "alumniOf": {
+      "@type": "CollegeOrUniversity",
+      "name": "广东技术师范大学"
+    },
+    "knowsAbout": ["ROS 2", "STM32", "嵌入式开发", "运动控制", "自主导航", "SLAM"]
+  }
+  </script>
   <!-- 内联 SVG favicon：霓虹六边形机器人徽标，避免 favicon.ico 404 -->
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2300e5ff'/%3E%3Cstop offset='1' stop-color='%237c4dff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='7' fill='%2305070f'/%3E%3Cpath d='M16 5l9 5v10l-9 5-9-5V10z' fill='none' stroke='url(%23g)' stroke-width='2'/%3E%3Ccircle cx='16' cy='15' r='3.2' fill='url(%23g)'/%3E%3Cpath d='M16 18.5v4M12 23h8' stroke='url(%23g)' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E" />
 
-  <!-- 样式：base(变量/重置/背景) → layout(区块布局) → components(组件样式) -->
+  <!-- 样式：base(变量/重置/背景) → layout(区块布局) → components(组件样式) → recruiter(求职速览+打印) -->
   <link rel="stylesheet" href="css/base.css" />
   <link rel="stylesheet" href="css/layout.css" />
   <link rel="stylesheet" href="css/components.css" />
+  <link rel="stylesheet" href="css/recruiter.css" />
 
-  <!-- 二维码库（单文件 UMD，注册全局 qrcode；本地离线可用） -->
-  <script src="js/vendor/qrcode.js"></script>
+  <!-- 二维码库（单文件 UMD，注册全局 qrcode；本地离线可用）
+       defer：不阻塞首屏解析，main.js 是 module（天然 defer），执行顺序仍在它之前 -->
+  <script src="js/vendor/qrcode.js" defer></script>
 </head>
 <body>
+  <!-- 键盘用户跳过导航直达内容（Tab 第一个焦点） -->
+  <a class="skip-link" href="#home">跳到主要内容</a>
+
   <!-- 科技感背景层：粒子 + 透视网格（canvas 由 fx.js 驱动） -->
   <canvas id="fx-bg" aria-hidden="true"></canvas>
   <div class="bg-vignette" aria-hidden="true"></div>
@@ -46,6 +86,9 @@
   </div>
 
   <main id="app">
+    <!-- 求职模式：给 HR 的一屏速览（components/recruiter.js 渲染，进入时替换常规视图） -->
+    <section id="recruiter" class="recruiter" hidden></section>
+
     <!-- 各模块容器，内容由对应 component 渲染（hash 路由锚点即这些 id） -->
     <section id="home" class="section hero-section"></section>
     <section id="experience" class="section"></section>
