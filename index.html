@@ -43,11 +43,12 @@
   <!-- 内联 SVG favicon：霓虹六边形机器人徽标，避免 favicon.ico 404 -->
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2300e5ff'/%3E%3Cstop offset='1' stop-color='%237c4dff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='7' fill='%2305070f'/%3E%3Cpath d='M16 5l9 5v10l-9 5-9-5V10z' fill='none' stroke='url(%23g)' stroke-width='2'/%3E%3Ccircle cx='16' cy='15' r='3.2' fill='url(%23g)'/%3E%3Cpath d='M16 18.5v4M12 23h8' stroke='url(%23g)' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E" />
 
-  <!-- 样式：base(变量/重置/背景) → layout(区块布局) → components(组件样式) → recruiter(求职速览+打印) -->
+  <!-- 样式：base(变量/重置/背景) → layout(区块布局) → components(组件样式) → recruiter(求职速览+打印) → circuit(电路走线) -->
   <link rel="stylesheet" href="css/base.css" />
   <link rel="stylesheet" href="css/layout.css" />
   <link rel="stylesheet" href="css/components.css" />
   <link rel="stylesheet" href="css/recruiter.css" />
+  <link rel="stylesheet" href="css/circuit.css" />
 
   <!-- 二维码库（单文件 UMD，注册全局 qrcode；本地离线可用）
        defer：不阻塞首屏解析，main.js 是 module（天然 defer），执行顺序仍在它之前 -->
@@ -60,6 +61,9 @@
   <!-- 科技感背景层：粒子 + 透视网格（canvas 由 fx.js 驱动） -->
   <canvas id="fx-bg" aria-hidden="true"></canvas>
   <div class="bg-vignette" aria-hidden="true"></div>
+
+  <!-- 电路走线叙事层：随滚动通电的主干 + 各区块接线柱（core/circuit.js 驱动，仅桌面） -->
+  <div id="circuit-layer" class="circuit-layer" aria-hidden="true"></div>
 
   <!-- 顶部滚动进度条 -->
   <div id="scroll-progress" aria-hidden="true"></div>

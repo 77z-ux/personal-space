@@ -340,6 +340,7 @@ export const CONTACT = {
 /** 音效与动效开关（true/false 改变全局行为） */
 export const FX = {
   particles: true,      // 粒子+网格背景
+  circuit: true,        // 电路走线滚动叙事（仅桌面显示）
   typewriterSpeed: 90,  // Slogan 打字机速度(ms/字)
   revealThreshold: 0.15,// 滚动入场触发阈值
 };

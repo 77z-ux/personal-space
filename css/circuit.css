@@ -1,0 +1,104 @@
+/**
+ * circuit.css —— 电路走线滚动叙事层（js/core/circuit.js 渲染）
+ * 层级：背景(0) < vignette(1) < 走线层(1, DOM 靠后) < 内容区块(2)
+ * 仅桌面显示；求职模式 / 移动端隐藏。
+ */
+
+.circuit-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+  overflow: hidden;
+}
+
+.circuit-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ---------- 主干 ---------- */
+.circuit-trunk-dark {
+  stroke: rgba(0, 229, 255, 0.10);
+  stroke-width: 2;
+  stroke-dasharray: 1 6;
+  stroke-linecap: round;
+}
+.circuit-trunk-lit {
+  stroke: var(--neon-cyan);
+  stroke-width: 2;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 5px rgba(0, 229, 255, 0.75));
+  transition: stroke-dashoffset 0.18s linear;
+}
+
+/* 起点端子 */
+.circuit-cap {
+  fill: var(--neon-cyan);
+  opacity: 0.85;
+  filter: drop-shadow(0 0 6px rgba(0, 229, 255, 0.8));
+}
+
+/* ---------- 火花（通电前端的光点） ---------- */
+.circuit-spark {
+  fill: #eaffff;
+  filter: drop-shadow(0 0 8px rgba(0, 229, 255, 1));
+  opacity: 0;
+  transition: opacity 0.3s, transform 0.18s linear;
+}
+.circuit-spark-glow {
+  fill: rgba(0, 229, 255, 0.18);
+  opacity: 0;
+  transition: opacity 0.3s, transform 0.18s linear;
+}
+
+/* ---------- 区块节点 ---------- */
+.circuit-node .circuit-branch {
+  stroke: rgba(0, 229, 255, 0.10);
+  stroke-width: 1.5;
+  transition: stroke 0.45s, filter 0.45s;
+}
+.circuit-node .circuit-pad {
+  fill: #131b30;
+  stroke: rgba(0, 229, 255, 0.22);
+  stroke-width: 1;
+  transition: fill 0.45s, stroke 0.45s, filter 0.45s;
+}
+.circuit-node .circuit-label {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  fill: rgba(148, 163, 198, 0.35);
+  transition: fill 0.45s, filter 0.45s;
+}
+
+/* 点亮态：通电 */
+.circuit-node.lit .circuit-branch {
+  stroke: var(--neon-cyan);
+  filter: drop-shadow(0 0 4px rgba(0, 229, 255, 0.6));
+}
+.circuit-node.lit .circuit-pad {
+  fill: var(--neon-cyan);
+  stroke: #eaffff;
+  filter: drop-shadow(0 0 7px rgba(0, 229, 255, 0.9));
+}
+.circuit-node.lit .circuit-label {
+  fill: var(--neon-cyan);
+  filter: drop-shadow(0 0 5px rgba(0, 229, 255, 0.55));
+}
+
+/* ---------- 隐藏场景 ---------- */
+body.mode-recruiter .circuit-layer { display: none; }
+@media (max-width: 640px) { .circuit-layer { display: none; } }
+
+/* 减少动态效果：去掉过渡与火花，节点瞬时点亮 */
+.circuit-layer.no-motion .circuit-trunk-lit,
+.circuit-layer.no-motion .circuit-branch,
+.circuit-layer.no-motion .circuit-pad,
+.circuit-layer.no-motion .circuit-label { transition: none; }
+.circuit-layer.no-motion .circuit-spark,
+.circuit-layer.no-motion .circuit-spark-glow { display: none; }
