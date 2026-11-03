@@ -76,6 +76,7 @@ export function renderRecruiter() {
             ✉ 发邮件
           </a>
           <button class="btn btn-ghost rc-btn" type="button" id="rc-copy" data-copy="${email}">复制邮箱</button>
+          ${RECRUITER.resumeFile ? `<a class="btn btn-ghost rc-btn" href="${RECRUITER.resumeFile}" target="_blank" rel="noopener noreferrer" title="在浏览器中查看简历">⌕ 预览简历</a>` : ''}
           <button class="btn btn-ghost rc-btn" type="button" id="rc-print">⤓ 保存 PDF</button>
         </div>
       </header>

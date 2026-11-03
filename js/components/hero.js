@@ -27,7 +27,7 @@ export function renderHero() {
           <a class="btn btn-primary" href="#projects">查看项目 ↓</a>
           <a class="btn btn-ghost" href="#contact">联系我</a>
           <a class="btn btn-ghost" href="${RECRUITER.resumeFile || '#contact'}" target="_blank" rel="noopener noreferrer"
-             title="查看 / 下载 PDF 简历">⤓ 简历 PDF</a>
+             title="在线预览 PDF 简历">⌕ 简历 PDF</a>
         </div>
       </div>
 

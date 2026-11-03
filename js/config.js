@@ -334,7 +334,7 @@ export const CONTACT = {
     { icon: '✆', label: '电话', value: '19830189385', href: 'tel:19830189385' },
     { icon: '✉', label: '邮箱', value: 'JonyJ17@163.com', href: 'mailto:JonyJ17@163.com' },
     { icon: '⌂', label: '学校', value: '广东技术师范大学 · 机器人工程', href: '' },
-    { icon: '⤓', label: '简历', value: '查看 / 下载 PDF 简历', href: 'assets/resume.pdf', file: true },
+    { icon: '⤓', label: '简历', value: '在线预览 PDF 简历', href: 'assets/resume.pdf', file: true },
   ],
   footerLine: '赛场百炼识真章，代码千行见匠心。',
 };

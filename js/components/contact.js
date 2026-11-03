@@ -2,7 +2,7 @@
  * components/contact.js —— 联系方式 + 外部链接 + 页尾
  * 数据：config.js CONTACT / LINKS
  */
-import { CONTACT, LINKS, SITE, PROFILE, RECRUITER } from '../config.js';
+import { CONTACT, LINKS, SITE, PROFILE } from '../config.js';
 
 export function renderContact() {
   const el = document.getElementById('contact');
@@ -14,8 +14,7 @@ export function renderContact() {
     <div class="contact-grid">
       ${CONTACT.items.map((c, i) => `
         <a class="contact-card reveal" data-anim="scale" data-delay="${i * 0.08}"
-           ${c.href ? `href="${c.href}"` : ''} ${c.href && (c.href.startsWith('http') || c.file) ? 'target="_blank" rel="noopener noreferrer"' : ''}
-           ${c.file ? `download="${RECRUITER.resumeFileName || ''}"` : ''}>
+           ${c.href ? `href="${c.href}"` : ''} ${c.href && (c.href.startsWith('http') || c.file) ? 'target="_blank" rel="noopener noreferrer"' : ''}>
           <span class="contact-icon">${c.icon}</span>
           <span>
             <span class="contact-label">${c.label}</span><br />
