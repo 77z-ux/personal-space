@@ -104,7 +104,8 @@ export const RECRUITER = {
   ],
 
   /** 简历文件：留空则按钮变为「保存为 PDF」（浏览器打印，无需上传文件） */
-  resumeFile: '',
+  resumeFile: 'assets/resume.pdf',
+  resumeFileName: '赵佳杰-机器人嵌入式简历.pdf',
 
   /** 速览页脚提示 */
   footerNote: '按 Esc 或点「退出速览」回到完整页面 · 链接加 ?mode=recruiter 可直接分享给 HR',
@@ -333,6 +334,7 @@ export const CONTACT = {
     { icon: '✆', label: '电话', value: '19830189385', href: 'tel:19830189385' },
     { icon: '✉', label: '邮箱', value: 'JonyJ17@163.com', href: 'mailto:JonyJ17@163.com' },
     { icon: '⌂', label: '学校', value: '广东技术师范大学 · 机器人工程', href: '' },
+    { icon: '⤓', label: '简历', value: '查看 / 下载 PDF 简历', href: 'assets/resume.pdf', file: true },
   ],
   footerLine: '赛场百炼识真章，代码千行见匠心。',
 };

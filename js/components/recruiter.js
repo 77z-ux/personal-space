@@ -196,8 +196,9 @@ function bindRecruiterActions(root) {
     if (RECRUITER.resumeFile) {
       const a = document.createElement('a');
       a.href = RECRUITER.resumeFile;
-      a.download = '';
+      a.download = RECRUITER.resumeFileName || '';
       a.click();
+      toast('简历 PDF 开始下载');
       return;
     }
     toast('在打印窗口选择「另存为 PDF」即可保存');

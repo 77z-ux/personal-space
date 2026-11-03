@@ -7,7 +7,7 @@
  * ============================================================
  */
 
-import { PROFILE, FX } from '../config.js';
+import { PROFILE, FX, RECRUITER } from '../config.js';
 
 export function renderHero() {
   const el = document.getElementById('home');
@@ -26,6 +26,8 @@ export function renderHero() {
         <div class="hero-actions">
           <a class="btn btn-primary" href="#projects">查看项目 ↓</a>
           <a class="btn btn-ghost" href="#contact">联系我</a>
+          <a class="btn btn-ghost" href="${RECRUITER.resumeFile || '#contact'}" target="_blank" rel="noopener noreferrer"
+             title="查看 / 下载 PDF 简历">⤓ 简历 PDF</a>
         </div>
       </div>
 
