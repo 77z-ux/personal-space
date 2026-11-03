@@ -39,5 +39,6 @@ export function renderFooter() {
     <p class="footer-poem">${CONTACT.footerLine}</p>
     <p>© ${new Date().getFullYear()} ${PROFILE.name} · ${SITE.title}</p>
     <p class="mono" style="margin-top:6px;opacity:.7">Built with vanilla JS · Hash Router · WebAudio</p>
+    <div class="footer-views" id="footer-views"></div>
   `;
 }

@@ -25,6 +25,7 @@ import { renderProjects } from './components/projects.js';
 import { renderGallery } from './components/gallery.js';
 import { renderContact, renderFooter } from './components/contact.js';
 import { initQrModal } from './components/qrmodal.js';
+import { mountViewCounter } from './components/views.js';
 
 function init() {
   // 1. 渲染各内容模块（顺序 = 页面区块顺序）
@@ -36,6 +37,7 @@ function init() {
   renderProjects();
   renderContact();
   renderFooter();
+  mountViewCounter(); // 页脚访问计数（依赖 renderFooter 生成的容器）
 
   // 2. 背景特效 + 滚动入场 + hash 路由
   if (FX.particles) initBackground();

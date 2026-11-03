@@ -21,6 +21,13 @@ export const SITE = {
   url: 'https://77z-ux.github.io/personal-space/',
   title: '赵佳杰 · 机器人系统开发',
   description: '机器人系统开发（嵌入式开发）｜ROS2 / STM32 / 运动控制 / 自主导航',
+
+  /** 页脚访问计数（纯静态站点无后端，走第三方计数服务）
+   *  enabled: false 可一键关闭；数据服务不可用时会自动降级/隐藏，不会显示假数据 */
+  views: {
+    enabled: true,
+    provider: 'busuanzi',
+  },
 };
 
 /** 个人基础信息（简历事实） */
