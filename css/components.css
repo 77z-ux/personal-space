@@ -28,6 +28,8 @@
 .tl-item:hover::before { transform: scale(1.35); box-shadow: 0 0 22px var(--neon-cyan); }
 .tl-item.tl-work::before { border-color: var(--neon-pink); box-shadow: 0 0 14px var(--neon-pink); }
 .tl-item.tl-campus::before { border-color: var(--neon-purple); box-shadow: 0 0 14px var(--neon-purple); }
+.tl-item.tl-comp::before { border-color: var(--neon-green); box-shadow: 0 0 14px var(--neon-green); }
+.tl-item.tl-comp:hover::before { box-shadow: 0 0 22px var(--neon-green); }
 
 .tl-date {
   font-family: var(--font-mono);
