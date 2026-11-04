@@ -49,6 +49,7 @@
   <link rel="stylesheet" href="css/components.css" />
   <link rel="stylesheet" href="css/recruiter.css" />
   <link rel="stylesheet" href="css/circuit.css" />
+  <link rel="stylesheet" href="css/playground.css" />
 
   <!-- 二维码库（单文件 UMD，注册全局 qrcode；本地离线可用）
        defer：不阻塞首屏解析，main.js 是 module（天然 defer），执行顺序仍在它之前 -->
@@ -78,6 +79,10 @@
     </button>
     <button id="share-btn" class="dock-btn" type="button" aria-label="分享二维码" title="分享 / 二维码">
       <span class="dock-icon">▦</span>
+    </button>
+    <!-- 入口：麦克纳姆轮解算沙盒（可玩） -->
+    <button id="lab-btn" class="dock-btn" type="button" aria-label="打开麦克纳姆轮解算沙盒" title="底盘解算沙盒 · 拖滑块看四轮轮速">
+      <span class="dock-icon">🤖</span>
     </button>
     <!-- 入口：成长轨迹贪吃蛇小游戏 -->
     <a class="dock-btn dock-link" href="snake.html" aria-label="玩成长轨迹贪吃蛇" title="成长轨迹 · 贪吃蛇">
@@ -129,6 +134,22 @@
       <button class="modal-close" type="button" data-close aria-label="关闭">✕</button>
       <h3 id="video-title" class="modal-title"></h3>
       <video id="video-player" class="video-player" controls playsinline preload="metadata"></video>
+    </div>
+  </div>
+
+  <!-- 麦克纳姆轮解算沙盒（js/playground/mecanum.js 控制，内容由其生成） -->
+  <div id="lab-modal" class="modal" hidden>
+    <div class="modal-mask" data-close></div>
+    <div class="modal-panel lab-panel" role="dialog" aria-modal="true" aria-labelledby="lab-title">
+      <button class="modal-close" type="button" data-close aria-label="关闭">✕</button>
+      <header class="lab-head">
+        <h3 id="lab-title" class="lab-title">麦克纳姆轮解算沙盒<b>MECANUM KINEMATICS LAB</b></h3>
+        <p class="lab-sub">
+          给底盘一个速度指令（vx / vy / ωz），下面四个轮子的转速是实时解出来的 ——
+          这台车不用转头就能横着走，代价是四个轮子得各转各的。
+        </p>
+      </header>
+      <div id="lab-root"></div>
     </div>
   </div>
 

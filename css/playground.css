@@ -1,0 +1,373 @@
+/* ============================================================
+   playground.css —— 麦克纳姆轮解算沙盒（#lab-modal）
+   ------------------------------------------------------------
+   与站点共用 base.css 的变量；面板结构：canvas 主视区 + 右侧仪表。
+   ============================================================ */
+
+.lab-panel {
+  width: min(96vw, 1040px);
+  max-height: 92vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px 22px 18px;
+}
+
+.lab-head {
+  margin-bottom: 16px;
+  padding-right: 36px;
+}
+.lab-title {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+.lab-title b {
+  margin-left: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  color: var(--neon-cyan);
+}
+.lab-sub {
+  margin-top: 6px;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--text-1);
+}
+
+.lab-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+/* ---------------- 画布区 ---------------- */
+
+.lab-stage {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(0, 229, 255, 0.18);
+  border-radius: 14px;
+  background: #05070f;
+  box-shadow: inset 0 0 70px rgba(0, 229, 255, 0.05);
+}
+#lab-canvas {
+  display: block;
+  width: 100%;
+  height: clamp(300px, 46vh, 440px);
+  touch-action: none;
+}
+
+.lab-badge,
+.lab-phase,
+.lab-legend {
+  position: absolute;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+.lab-badge {
+  top: 10px;
+  left: 10px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  color: var(--neon-cyan);
+  background: rgba(0, 229, 255, 0.08);
+  border: 1px solid rgba(0, 229, 255, 0.26);
+  backdrop-filter: blur(6px);
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+.lab-badge.slow {
+  color: #ffd28a;
+  background: rgba(255, 180, 80, 0.12);
+  border-color: rgba(255, 180, 80, 0.42);
+}
+.lab-badge.warn {
+  color: #ff9ab0;
+  background: rgba(255, 64, 129, 0.14);
+  border-color: rgba(255, 64, 129, 0.5);
+}
+
+.lab-legend {
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 12px;
+  color: var(--text-2);
+}
+.lab-legend i {
+  display: inline-block;
+  width: 14px;
+  height: 0;
+  margin-right: 5px;
+  vertical-align: middle;
+  border-top: 2px dashed var(--neon-cyan);
+}
+.lab-legend i.lg-act {
+  border-top-style: solid;
+  border-top-color: var(--neon-green);
+}
+
+.lab-phase {
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  max-width: calc(100% - 24px);
+  padding: 4px 12px;
+  border-radius: 999px;
+  color: var(--text-1);
+  background: rgba(6, 10, 22, 0.72);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.2s, border-color 0.2s;
+}
+.lab-phase.on {
+  color: var(--neon-green);
+  border-color: rgba(105, 240, 174, 0.42);
+}
+
+/* ---------------- 右侧仪表 ---------------- */
+
+.lab-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.lab-block {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(10, 15, 30, 0.62);
+}
+.lab-h4 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-1);
+}
+.lab-kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--text-2);
+}
+.lab-peak {
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--text-2);
+}
+
+/* 滑块行 */
+.lab-slider {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) 62px;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 9px;
+}
+.lab-slider label {
+  font-size: 11.5px;
+  color: var(--text-1);
+}
+.lab-slider output {
+  font-size: 11.5px;
+  color: var(--neon-cyan);
+  text-align: right;
+}
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(0, 229, 255, 0.16);
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 50%;
+  background: var(--neon-cyan);
+  box-shadow: 0 0 10px rgba(0, 229, 255, 0.75);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 50%;
+  background: var(--neon-cyan);
+  box-shadow: 0 0 10px rgba(0, 229, 255, 0.75);
+}
+
+.lab-btnrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 11px;
+}
+.lab-btn {
+  flex: 1 1 auto;
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: 1px solid rgba(0, 229, 255, 0.22);
+  background: rgba(0, 229, 255, 0.06);
+  color: var(--text-0);
+  font-size: 12px;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+.lab-btn:hover {
+  background: rgba(0, 229, 255, 0.14);
+  border-color: rgba(0, 229, 255, 0.5);
+}
+.lab-btn.on {
+  color: #d8ffef;
+  background: rgba(105, 240, 174, 0.14);
+  border-color: rgba(105, 240, 174, 0.5);
+}
+
+/* 四轮轮速 */
+.lab-wheels { display: grid; gap: 7px; }
+.lab-wheel {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 52px;
+  gap: 9px;
+  align-items: center;
+}
+.lab-wl {
+  font-size: 11px;
+  color: var(--text-2);
+}
+.lab-bar {
+  position: relative;
+  height: 7px;
+  border-radius: 4px;
+  background: rgba(0, 229, 255, 0.09);
+  overflow: hidden;
+}
+.lab-bar::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: rgba(0, 229, 255, 0.3);
+}
+.lab-bar i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  border-radius: 4px;
+  transition: width 0.07s linear;
+}
+.lab-wv {
+  font-size: 11.5px;
+  color: var(--text-0);
+  text-align: right;
+}
+
+.lab-formula {
+  margin-top: 10px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-2);
+  word-break: break-word;
+}
+
+/* 实时状态 */
+.lab-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 14px;
+}
+.lab-stat {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+.lab-stat b {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--text-0);
+}
+
+/* 参数折叠区 */
+.lab-more summary {
+  margin-bottom: 0;
+  cursor: pointer;
+  list-style: none;
+}
+.lab-more summary::-webkit-details-marker { display: none; }
+.lab-more summary::after {
+  content: "+";
+  font-family: var(--font-mono);
+  color: var(--neon-cyan);
+}
+.lab-more[open] summary { margin-bottom: 12px; }
+.lab-more[open] summary::after { content: "−"; }
+
+.lab-toggle {
+  display: flex;
+  gap: 6px;
+  margin: 12px 0 8px;
+}
+.lab-toggle button {
+  flex: 1;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-1);
+  font-size: 12px;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+.lab-toggle button.on {
+  color: var(--neon-cyan);
+  border-color: rgba(0, 229, 255, 0.55);
+  background: rgba(0, 229, 255, 0.1);
+}
+
+.lab-note {
+  font-size: 11px;
+  line-height: 1.65;
+  color: var(--text-2);
+}
+.lab-note b {
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+/* ---------------- 响应式 ---------------- */
+
+@media (max-width: 860px) {
+  .lab-panel { padding: 16px 14px 14px; }
+  .lab-title { font-size: 16px; }
+  .lab-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  #lab-canvas { height: clamp(230px, 34vh, 300px); }
+  .lab-legend { display: none; }
+  .lab-stats { gap: 4px 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lab-bar i { transition: none; }
+}
