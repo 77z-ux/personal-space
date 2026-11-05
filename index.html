@@ -5,7 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="赵佳杰 · 机器人系统开发（嵌入式开发）个人空间 —— ROS2 / STM32 / 运动控制 / 自主导航" />
   <title>赵佳杰 · 机器人系统开发</title>
-  <meta name="theme-color" content="#05070f" />
+  <meta name="theme-color" content="#041019" />
+
+  <!-- 主题引导：CSS 解析前设置 data-theme，避免首帧闪错主题（默认极光夜幕） -->
+  <script>
+    (function () {
+      var t = 'aurora';
+      try { t = localStorage.getItem('site-theme') || 'aurora'; } catch (e) {}
+      // 支持链接指定主题（临时生效，不覆盖本地偏好）：index.html?theme=paper
+      var q = new URLSearchParams(location.search).get('theme');
+      if (q) t = q;
+      document.documentElement.dataset.theme = t;
+    })();
+  </script>
 
   <!-- 分享卡：二维码 / 微信 / QQ 转发时的缩略图与标题（分享卡图由本页首屏生成，1200×630） -->
   <meta property="og:type" content="profile" />
@@ -50,6 +62,7 @@
   <link rel="stylesheet" href="css/recruiter.css" />
   <link rel="stylesheet" href="css/circuit.css" />
   <link rel="stylesheet" href="css/playground.css" />
+  <link rel="stylesheet" href="css/themes.css" />
 
   <!-- 二维码库（单文件 UMD，注册全局 qrcode；本地离线可用）
        defer：不阻塞首屏解析，main.js 是 module（天然 defer），执行顺序仍在它之前 -->
@@ -59,7 +72,8 @@
   <!-- 键盘用户跳过导航直达内容（Tab 第一个焦点） -->
   <a class="skip-link" href="#home">跳到主要内容</a>
 
-  <!-- 科技感背景层：粒子 + 透视网格（canvas 由 fx.js 驱动） -->
+  <!-- 背景层：主题装饰（柔光/图案，css/themes.css 驱动） + 粒子透视网格（core/fx.js 驱动） + 暗角 -->
+  <div id="theme-bg" aria-hidden="true"></div>
   <canvas id="fx-bg" aria-hidden="true"></canvas>
   <div class="bg-vignette" aria-hidden="true"></div>
 
@@ -72,8 +86,13 @@
   <!-- 导航（由 components/nav.js 填充） -->
   <header id="nav" class="nav"></header>
 
-  <!-- 悬浮控件：静音开关 + 分享二维码（fixed 悬浮，显眼位置） -->
+  <!-- 悬浮控件：主题切换 + 静音开关 + 分享二维码（fixed 悬浮，显眼位置） -->
   <div class="float-dock">
+    <!-- 背景主题切换：点击在 5 套主题间循环（core/themes.js） -->
+    <button id="theme-btn" class="dock-btn" type="button" aria-label="切换背景主题">
+      <span class="dock-icon" id="theme-icon">🌌</span>
+    </button>
+    <div id="theme-toast" class="theme-toast" aria-live="polite"></div>
     <button id="sound-toggle" class="dock-btn" type="button" aria-label="音效开关" title="音效开关">
       <span class="dock-icon" id="sound-icon">🔇</span>
     </button>

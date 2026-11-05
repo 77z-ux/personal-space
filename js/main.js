@@ -30,6 +30,7 @@ import { initRecruiterMode } from './components/recruiter.js';
 import { initMotion } from './core/motion.js';
 import { initCircuit } from './core/circuit.js';
 import { initMecanumLab } from './playground/mecanum.js';
+import { initThemeSwitcher } from './core/themes.js';
 
 function init() {
   // 1. 渲染各内容模块（顺序 = 页面区块顺序）
@@ -50,9 +51,10 @@ function init() {
   initRouter();
   initCircuit(); // 电路走线滚动叙事（依赖各区块已渲染 + 路由表）
 
-  // 3. 二维码弹窗 + 底盘沙盒 + 静音开关 + 求职模式（依赖导航里渲染出的切换按钮）
+  // 3. 二维码弹窗 + 底盘沙盒 + 静音开关 + 主题切换 + 求职模式（依赖导航里渲染出的切换按钮）
   initQrModal();
   initMecanumLab();
+  initThemeSwitcher();
   initSoundToggle();
   initRecruiterMode();
 

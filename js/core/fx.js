@@ -17,6 +17,15 @@ const CONFIG = {
   colors: ['#00e5ff', '#7c4dff', '#ff4081'],
 };
 
+/** 主题对应的粒子/网格配色（id 与 css/themes.css 保持一致） */
+const THEME_FX = {
+  aurora:    { colors: ['#2effc4', '#38a0ff', '#9b6bff'], gridV: '46,255,196',  gridH: '56,150,255' },
+  neon:      { colors: ['#00e5ff', '#7c4dff', '#ff4081'], gridV: '0,229,255',   gridH: '124,77,255' },
+  blueprint: { colors: ['#8fc0ff', '#6db5ff', '#bfe0ff'], gridV: '160,200,255', gridH: '160,200,255' },
+  paper:     { colors: ['#b03a2e', '#8a5a20'],            gridV: '120,100,60',  gridH: '120,100,60' },
+  terminal:  { colors: ['#3fff7e', '#baff4f', '#2bd45f'], gridV: '80,255,140',  gridH: '80,255,140' },
+};
+
 export function initBackground() {
   const canvas = document.getElementById('fx-bg');
   if (!canvas) return;
@@ -28,6 +37,13 @@ export function initBackground() {
   let gridOffset = 0;
   let mouse = { x: 0.5, y: 0.5 };
   let running = true;
+
+  // 当前主题的背景配色（主题切换时通过 theme:change 事件同步）
+  let T = THEME_FX[document.documentElement.dataset.theme] || THEME_FX.aurora;
+  document.addEventListener('theme:change', () => {
+    T = THEME_FX[document.documentElement.dataset.theme] || THEME_FX.aurora;
+    spawn();
+  });
 
   function resize() {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -55,7 +71,7 @@ export function initBackground() {
     const vanX = w / 2 + (mouse.x - 0.5) * 40;
 
     ctx.save();
-    ctx.strokeStyle = 'rgba(0, 229, 255, 0.07)';
+    ctx.strokeStyle = `rgba(${T.gridV}, 0.07)`;
     ctx.lineWidth = 1;
 
     // 纵向放射线（汇聚到消失点）
@@ -73,7 +89,7 @@ export function initBackground() {
       const p = ((i / CONFIG.gridRows + gridOffset) % 1);
       const y = horizon + (h - horizon) * p * p; // 平方制造透视压缩
       const alpha = 0.02 + p * 0.10;
-      ctx.strokeStyle = `rgba(124, 77, 255, ${alpha.toFixed(3)})`;
+      ctx.strokeStyle = `rgba(${T.gridH}, ${alpha.toFixed(3)})`;
       ctx.beginPath();
       ctx.moveTo(0, y);
       ctx.lineTo(w, y);
@@ -95,7 +111,7 @@ export function initBackground() {
         const d2 = dx * dx + dy * dy;
         if (d2 < CONFIG.linkDistance * CONFIG.linkDistance) {
           const alpha = (1 - Math.sqrt(d2) / CONFIG.linkDistance) * 0.14;
-          ctx.strokeStyle = `rgba(0, 229, 255, ${alpha.toFixed(3)})`;
+          ctx.strokeStyle = `rgba(${T.gridV}, ${alpha.toFixed(3)})`;
           ctx.lineWidth = 0.6;
           ctx.beginPath();
           ctx.moveTo(a.x + mx * a.r * 0.4, a.y + my * a.r * 0.4);
